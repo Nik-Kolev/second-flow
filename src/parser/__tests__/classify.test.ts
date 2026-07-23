@@ -381,6 +381,55 @@ test('a system turn_duration record keeps its duration fields', async () => {
 	assert.equal(sys?.messageCount, 3);
 });
 
+test('a rate-limit-shaped assistant record is flagged structurally', async () => {
+	const lines = [
+		line({
+			type: 'assistant',
+			message: {
+				id: 'msg_ratelimit',
+				model: '<synthetic>',
+				role: 'assistant',
+				content: [{ type: 'text', text: "You've hit your session limit · resets 11:40pm" }],
+				usage: { input_tokens: 0, output_tokens: 0 },
+			},
+			uuid: 'u1',
+			timestamp: 't1',
+			error: 'rate_limit',
+			isApiErrorMessage: true,
+			apiErrorStatus: 429,
+		}),
+	];
+
+	const session = await parseRecords(lines, context);
+	const turn = session.timeline.find((e): e is AssistantTurnEvent => e.kind === 'assistant-turn');
+
+	assert.equal(turn?.rateLimited, true);
+	assert.equal(turn?.apiErrorStatus, 429);
+});
+
+test('an ordinary assistant record is never flagged as rate-limited', async () => {
+	const lines = [
+		line({
+			type: 'assistant',
+			message: {
+				id: 'msg_ordinary',
+				model: 'claude-sonnet-5',
+				role: 'assistant',
+				content: [{ type: 'text', text: 'hello' }],
+				usage: { input_tokens: 5, output_tokens: 5 },
+			},
+			uuid: 'u1',
+			timestamp: 't1',
+		}),
+	];
+
+	const session = await parseRecords(lines, context);
+	const turn = session.timeline.find((e): e is AssistantTurnEvent => e.kind === 'assistant-turn');
+
+	assert.equal(turn?.rateLimited, false);
+	assert.equal(turn?.apiErrorStatus, undefined);
+});
+
 test('secrets in a tool_use input are scrubbed before being surfaced', async () => {
 	const lines = [
 		line({
