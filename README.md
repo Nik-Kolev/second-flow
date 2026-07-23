@@ -6,4 +6,20 @@ Runs only on your own machine, billed on your own Anthropic API key — never to
 
 ## Status
 
-Early scaffolding — not yet functional. See the Core steps in the project plan for what's built and what's next.
+Core step 1 (scaffold) done: Express + TypeScript + Prisma/SQLite base, no domain logic or routes yet. See the Core steps in the project plan for what's next.
+
+## Setup
+
+```bash
+npm install
+cp .env.example .env   # then fill in ANTHROPIC_API_KEY
+npx prisma migrate dev --name init
+npm run dev
+```
+
+## Scripts
+
+- `npm run dev` — start the server (`tsx watch`)
+- `npm run build` — compile to `dist/`
+- `npm start` — run the compiled build
+- `npm run lint` / `npm run format`
