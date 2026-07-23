@@ -6,7 +6,7 @@ Runs only on your own machine, billed on your own Anthropic API key — never to
 
 ## Status
 
-Core step 2 (transcript parser) done: reads Claude Code's own session JSONL files and splits them into a conversation timeline, environmental-context records (hooks, skills, MCP instructions, output style), and noise. Still no Express routes/domain logic wired up yet. See the Core steps in the project plan for what's next.
+Core step 2 (transcript parser) done: reads Claude Code's own session JSONL files and splits them into a conversation timeline, environmental-context records (hooks, skills, MCP instructions, output style), and noise. Core step 3 (rulebook resolver) done: given a parsed session, discovers what actually governed it — global/project `CLAUDE.md`, a `SessionStart` hook's injected docs, and environmental instructions (MCP/skill/output-style) — and tags each block by source layer, with no merge/precedence logic. Still no Express routes/domain logic wired up yet. See the Core steps in the project plan for what's next.
 
 ## Setup
 
@@ -23,4 +23,4 @@ npm run dev
 - `npm run build` — compile to `dist/`
 - `npm start` — run the compiled build
 - `npm run lint` / `npm run format`
-- `npm test` — run the parser test suite (`node:test`, via `tsx`)
+- `npm test` — run the parser + rulebook resolver test suite (`node:test`, via `tsx`)
