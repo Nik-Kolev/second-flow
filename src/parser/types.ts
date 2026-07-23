@@ -29,6 +29,9 @@ export interface RawAssistantRecord {
 	effort?: string;
 	uuid: string;
 	timestamp: string;
+	error?: string;
+	isApiErrorMessage?: boolean;
+	apiErrorStatus?: number;
 	[key: string]: unknown;
 }
 
@@ -96,6 +99,9 @@ export interface AssistantTurnEvent {
 	effort?: string;
 	usage: UsageInfo;
 	content: AssistantContentBlock[];
+	// model is the sentinel "<synthetic>" on rate-limited turns, not a real model name.
+	rateLimited?: boolean;
+	apiErrorStatus?: number;
 }
 
 export interface UserMessageEvent {
@@ -154,6 +160,8 @@ export interface ToolCallEvent {
 	isSubagentSpawn: boolean;
 	isBackground: boolean;
 	result: ToolCallResult;
+	// Best-effort, see subagent-model.ts — unset if subagent data is missing/malformed.
+	subagentModel?: string;
 }
 
 export type TimelineEvent =

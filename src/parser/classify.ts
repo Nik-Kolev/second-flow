@@ -114,7 +114,7 @@ function handleAssistantRecord(
 	pendingAssistantTurn: AssistantTurnEvent | null,
 	pendingToolCalls: Map<string, ToolCallEvent>,
 ): AssistantTurnEvent {
-	const { message, uuid, timestamp, effort } = record;
+	const { message, uuid, timestamp, effort, error, isApiErrorMessage, apiErrorStatus } = record;
 
 	// A single logical API response is persisted as several consecutive `assistant` lines (one
 	// content block each), sharing one `message.id` and repeating the same `usage` object — group
@@ -130,6 +130,9 @@ function handleAssistantRecord(
 			effort,
 			usage: toUsageInfo(message.usage),
 			content: [],
+			// Rate-limit records are always their own single turn, verified — safe to set only here.
+			rateLimited: isApiErrorMessage === true && error === 'rate_limit',
+			apiErrorStatus: typeof apiErrorStatus === 'number' ? apiErrorStatus : undefined,
 		};
 		timeline.push(turn);
 	}

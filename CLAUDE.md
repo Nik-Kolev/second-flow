@@ -18,6 +18,7 @@ A local tool that reads Claude Code session transcripts and audits them, as an i
 - `src/env.ts` — loads `.env` via `process.loadEnvFile()` (no `dotenv` dependency — Node 20.12+ stdlib)
 - `src/parser/` — reads Claude Code's own session JSONL transcripts (`~/.claude/projects/<slug>/`, path overridable via `CLAUDE_PROJECTS_DIR`) and splits them into a conversation timeline, environmental-context records, and noise; no DB writes, pure in-memory parsing. `src/parser/__tests__/` — `node:test` (Node's built-in runner, no new dependency), run via `npm test`.
 - `src/rulebook/` — given a parsed session's `attachments`/`meta.cwd`, discovers the rulebook that actually governed it: global `~/.claude/CLAUDE.md`, one project-root `CLAUDE.md` (no `@`-import recursion or nested subtree discovery yet — deferred, neither appears in real transcripts so far), a `SessionStart` hook's injected docs (if the user runs one), and environmental instructions (MCP/skill/output-style attachments, with MCP add/remove deltas netted to the currently-active set). Tags every block by source layer (`managed`/`user`/`project`/`environmental`) — no merge/precedence logic. No DB writes. `src/rulebook/__tests__/` — same `node:test` convention, run via `npm test`.
+- `src/stats/` — given a parsed session's `timeline`, computes structural facts as evidence for later findings: agent/subagent usage (with repeat-invocation candidates), context-budget consumption per turn, cache-read ratio with unexplained-drop detection (cross-referenced against `/compact` events), rate-limit hits, and git/subagent boundary candidates. Pure in-memory, no DB writes. `src/stats/__tests__/` — same `node:test` convention, run via `npm test`.
 - `prisma/schema/` — one file per domain; `base.prisma` holds generator + datasource only
 - `prisma.config.ts` — datasource URL and migrations path (Prisma 7 moved these out of the schema file)
 
@@ -27,7 +28,7 @@ A local tool that reads Claude Code session transcripts and audits them, as an i
 - `npm run build` — compile to `dist/`
 - `npm start` — run the compiled build
 - `npm run lint` / `npm run format`
-- `npm test` — run the parser test suite
+- `npm test` — run the parser, rulebook, and stats test suites
 - `npx prisma migrate dev --name <name>` — apply a schema change
 - `npx prisma studio` — browse the SQLite DB
 

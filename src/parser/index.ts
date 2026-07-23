@@ -3,6 +3,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { parseRecords } from './classify.js';
 import { findLatestSessionFile, resolveSessionFilePath } from './locate.js';
+import { enrichSubagentModels } from './subagent-model.js';
 import type { ParsedSession } from './types.js';
 
 export * from './types.js';
@@ -15,6 +16,7 @@ export {
 } from './locate.js';
 export { scrubDeep, scrubText } from './scrub.js';
 export { parseRecords } from './classify.js';
+export { enrichSubagentModels, resolveSubagentsDir } from './subagent-model.js';
 
 export async function parseSessionFile(
 	filePath: string,
@@ -26,7 +28,9 @@ export async function parseSessionFile(
 		input: createReadStream(filePath, 'utf-8'),
 		crlfDelay: Infinity,
 	});
-	return parseRecords(rl, { sessionId, projectSlug, filePath });
+	const session = await parseRecords(rl, { sessionId, projectSlug, filePath });
+	await enrichSubagentModels(session.timeline, filePath, sessionId);
+	return session;
 }
 
 export async function parseSession(slug: string, sessionId?: string): Promise<ParsedSession> {
