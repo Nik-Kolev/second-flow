@@ -1,0 +1,10 @@
+/// <reference types="node" />
+import { defineConfig } from 'prisma/config';
+
+process.loadEnvFile();
+
+export default defineConfig({
+	schema: 'prisma/schema',
+	migrations: { path: 'prisma/migrations' },
+	datasource: { url: process.env['DATABASE_URL']! },
+});

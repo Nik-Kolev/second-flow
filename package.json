@@ -1,0 +1,41 @@
+{
+	"name": "second-flow",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"description": "A local tool that reads your own Claude Code session transcripts and audits them, as an independent external observer, against your live rulebook (whatever your setup actually loads). Reports where the agent skipped or half-arsed a rule, proposes tightened wording when the wording is what failed, and coaches the prompts that led there.",
+	"scripts": {
+		"dev": "tsx watch src/server.ts",
+		"build": "tsc",
+		"start": "node dist/server.js",
+		"format": "prettier --write .",
+		"lint": "eslint ."
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Nik-Kolev/second-flow.git"
+	},
+	"license": "UNLICENSED",
+	"dependencies": {
+		"@prisma/adapter-libsql": "^7.9.0",
+		"@prisma/client": "^7.9.0",
+		"express": "^5.2.1"
+	},
+	"devDependencies": {
+		"@eslint/js": "^10.0.1",
+		"@types/express": "^5.0.6",
+		"@types/node": "^26.1.1",
+		"eslint": "^10.7.0",
+		"globals": "^17.7.0",
+		"prettier": "^3.9.6",
+		"prisma": "^7.9.0",
+		"tsx": "^4.23.1",
+		"typescript": "^6.0.3",
+		"typescript-eslint": "^8.65.0"
+	},
+	"allowScripts": {
+		"prisma@7.9.0": true,
+		"@prisma/engines@7.9.0": true,
+		"esbuild@0.28.1": true
+	}
+}
