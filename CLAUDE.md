@@ -16,6 +16,7 @@ A local tool that reads Claude Code session transcripts and audits them, as an i
 - `src/server.ts` — Express entry point
 - `src/lib/prisma.ts` — Prisma client singleton
 - `src/env.ts` — loads `.env` via `process.loadEnvFile()` (no `dotenv` dependency — Node 20.12+ stdlib)
+- `src/parser/` — reads Claude Code's own session JSONL transcripts (`~/.claude/projects/<slug>/`, path overridable via `CLAUDE_PROJECTS_DIR`) and splits them into a conversation timeline, environmental-context records, and noise; no DB writes, pure in-memory parsing. `src/parser/__tests__/` — `node:test` (Node's built-in runner, no new dependency), run via `npm test`.
 - `prisma/schema/` — one file per domain; `base.prisma` holds generator + datasource only
 - `prisma.config.ts` — datasource URL and migrations path (Prisma 7 moved these out of the schema file)
 
@@ -25,6 +26,7 @@ A local tool that reads Claude Code session transcripts and audits them, as an i
 - `npm run build` — compile to `dist/`
 - `npm start` — run the compiled build
 - `npm run lint` / `npm run format`
+- `npm test` — run the parser test suite
 - `npx prisma migrate dev --name <name>` — apply a schema change
 - `npx prisma studio` — browse the SQLite DB
 
