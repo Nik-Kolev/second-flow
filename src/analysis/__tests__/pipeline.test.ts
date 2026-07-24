@@ -8,7 +8,12 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { PrismaLibSql } from '@prisma/adapter-libsql';
 import { AuditedSessionStatus, PrismaClient } from '../../generated/prisma/index.js';
 import type { LintFinding } from '../../lint/index.js';
-import type { AttachmentBucket, ParsedSession, ToolCallEvent } from '../../parser/index.js';
+import type {
+	AttachmentBucket,
+	ParsedSession,
+	RawUsage,
+	ToolCallEvent,
+} from '../../parser/index.js';
 import type { RulebookResolution } from '../../rulebook/index.js';
 import type { SessionStats } from '../../stats/index.js';
 import { JUDGMENT_PURPOSE } from '../judgment.js';
@@ -47,6 +52,24 @@ function emptyAttachments(): AttachmentBucket {
 		mcpInstructionsDelta: [],
 		outputStyle: [],
 		unknown: [],
+	};
+}
+
+function makeAssistantTurn(messageId: string, usage: RawUsage): ParsedSession['timeline'][number] {
+	return {
+		kind: 'assistant-turn',
+		messageId,
+		uuid: messageId,
+		timestamp: 't',
+		model: 'claude-sonnet-5',
+		usage: {
+			inputTokens: usage.input_tokens,
+			outputTokens: usage.output_tokens,
+			cacheReadInputTokens: usage.cache_read_input_tokens,
+			cacheCreationInputTokens: usage.cache_creation_input_tokens,
+			raw: usage,
+		},
+		content: [],
 	};
 }
 
@@ -272,4 +295,47 @@ test("the happy path creates a completed AuditedSession plus correctly FK'd find
 	});
 	assert.equal(proposals.length, 1);
 	assert.equal(proposals[0].targetRuleRef, 'CLAUDE.md');
+});
+
+test('the AuditedSession row records transcriptTokenTotal summed across every assistant turn', async () => {
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+	const timeline = [
+		makeAssistantTurn('turn-1', {
+			input_tokens: 100,
+			output_tokens: 50,
+			cache_read_input_tokens: 10,
+			cache_creation_input_tokens: 5,
+		}),
+		makeToolCall('call-a'),
+		makeAssistantTurn('turn-2', {
+			input_tokens: 200,
+			output_tokens: 25,
+		}),
+	];
+	const lintFindings: LintFinding[] = [
+		{
+			checkerId: 'commit-gating',
+			toolUseId: 'call-a',
+			timestamp: 't',
+			evidence: 'no approval',
+		},
+	];
+	const input = {
+		session: makeSession(timeline),
+		stats: emptyStats(),
+		lintFindings,
+		rulebook: makeRulebook(),
+	};
+
+	const outcome = await runJudgmentPipelineForSession(input, auditRun.id, async () => true, {
+		prisma: testPrisma,
+		anthropic: makeWellFormedAnthropic(),
+	});
+
+	assert.equal(outcome.outcome, 'completed');
+	const sessions = await testPrisma.auditedSession.findMany();
+	assert.equal(sessions.length, 1);
+	// turn-1: 100+50+10+5 = 165; turn-2 (no cache fields): 200+25 = 225; total 390. The
+	// intervening tool-call event must not contribute anything.
+	assert.equal(sessions[0].transcriptTokenTotal, 390);
 });
