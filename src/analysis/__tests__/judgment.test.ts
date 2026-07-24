@@ -166,7 +166,7 @@ test('a well-formed response returns completed findings and logs a Sonnet AuditR
 	const fake = makeFakeAnthropic(wellFormedInput());
 	const auditRun = await testPrisma.auditRun.create({ data: {} });
 
-	const outcome = await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), {
+	const outcome = await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), [], {
 		prisma: testPrisma,
 		anthropic: fake.client,
 	});
@@ -186,6 +186,33 @@ test('a well-formed response returns completed findings and logs a Sonnet AuditR
 	assert.equal(callRows[0].inputTokens, FAKE_USAGE.input_tokens);
 });
 
+test('flagged signals (e.g. a rate-limit hit not visible in the evidence text) reach the prompt', async () => {
+	const fake = makeFakeAnthropic(wellFormedInput());
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+	const signal = 'Rate limit hit (status 429)';
+
+	await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), [signal], {
+		prisma: testPrisma,
+		anthropic: fake.client,
+	});
+
+	const requestParams = fake.lastParams() as { messages: Array<{ content: string }> };
+	assert.ok(requestParams.messages[0].content.includes(signal));
+});
+
+test('an empty flaggedSignals list produces no "Flagged signals" section', async () => {
+	const fake = makeFakeAnthropic(wellFormedInput());
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+
+	await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), [], {
+		prisma: testPrisma,
+		anthropic: fake.client,
+	});
+
+	const requestParams = fake.lastParams() as { messages: Array<{ content: string }> };
+	assert.ok(!requestParams.messages[0].content.includes('Flagged signals'));
+});
+
 test("a rule-rewrite proposal citing a targetRuleRef outside the rulebook's file blocks is dropped", async () => {
 	const input = wellFormedInput();
 	input.ruleRewriteProposals = [
@@ -200,7 +227,7 @@ test("a rule-rewrite proposal citing a targetRuleRef outside the rulebook's file
 	const fake = makeFakeAnthropic(input);
 	const auditRun = await testPrisma.auditRun.create({ data: {} });
 
-	const outcome = await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), {
+	const outcome = await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), [], {
 		prisma: testPrisma,
 		anthropic: fake.client,
 	});
@@ -260,7 +287,7 @@ test('a malformed tool input is isolated: errored, but spend is logged', async (
 	const fake = makeFakeAnthropic('malformed');
 	const auditRun = await testPrisma.auditRun.create({ data: {} });
 
-	const outcome = await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), {
+	const outcome = await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), [], {
 		prisma: testPrisma,
 		anthropic: fake.client,
 	});
@@ -277,7 +304,7 @@ test('a response with no tool_use block is isolated: errored, but spend is logge
 	const fake = makeFakeAnthropic('noToolUse');
 	const auditRun = await testPrisma.auditRun.create({ data: {} });
 
-	const outcome = await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), {
+	const outcome = await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), [], {
 		prisma: testPrisma,
 		anthropic: fake.client,
 	});
@@ -291,7 +318,7 @@ test('a simulated network failure logs zero spend and does not throw', async () 
 	const fake = makeFakeAnthropic('reject');
 	const auditRun = await testPrisma.auditRun.create({ data: {} });
 
-	const outcome = await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), {
+	const outcome = await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), [], {
 		prisma: testPrisma,
 		anthropic: fake.client,
 	});

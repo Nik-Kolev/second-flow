@@ -147,6 +147,7 @@ test('a rate-limit hit resolves via the assistant-turn index, not the raw timeli
 		1,
 		'must resolve to the raw index of the 0th assistant-turn',
 	);
+	assert.ok(triggers[0].signal?.includes('429'), 'the status code must reach the signal field');
 });
 
 test('an unexplained cache drop resolves via toTurnIndex', () => {
@@ -166,6 +167,10 @@ test('an unexplained cache drop resolves via toTurnIndex', () => {
 	assert.equal(triggers.length, 1);
 	assert.equal(triggers[0].kind, 'unexplained-cache-drop');
 	assert.equal(triggers[0].timelineIndex, 1);
+	assert.ok(
+		triggers[0].signal?.includes('0.90') && triggers[0].signal?.includes('0.50'),
+		'the ratio numbers must reach the signal field',
+	);
 });
 
 test('a repeat-candidate subagent group produces one trigger per invocation', () => {

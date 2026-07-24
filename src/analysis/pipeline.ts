@@ -56,6 +56,7 @@ export async function executeJudgmentForSession(
 	input: JudgmentPipelineInput,
 	auditRunId: string,
 	evidenceWindow: TimelineEvent[],
+	triggers: GateTrigger[],
 	deps: PipelineExecDeps = {},
 ): Promise<JudgmentPipelineOutcome> {
 	const prisma = deps.prisma ?? prismaClient;
@@ -85,7 +86,16 @@ export async function executeJudgmentForSession(
 		},
 	});
 
-	const callOutcome = await runJudgmentCall(auditRunId, input.rulebook, evidenceWindow, deps);
+	const flaggedSignals = triggers
+		.map((trigger) => trigger.signal)
+		.filter((signal): signal is string => signal !== undefined);
+	const callOutcome = await runJudgmentCall(
+		auditRunId,
+		input.rulebook,
+		evidenceWindow,
+		flaggedSignals,
+		deps,
+	);
 	if (callOutcome.outcome === 'errored') {
 		return {
 			outcome: 'errored',
@@ -127,5 +137,11 @@ export async function runJudgmentPipelineForSession(
 		return { outcome: 'declinedByUser' };
 	}
 
-	return executeJudgmentForSession(input, auditRunId, gateResult.evidenceWindow, deps);
+	return executeJudgmentForSession(
+		input,
+		auditRunId,
+		gateResult.evidenceWindow,
+		gateResult.triggers,
+		deps,
+	);
 }

@@ -97,7 +97,20 @@ function describeRulebook(rulebook: RulebookResolution): string {
 function buildJudgmentPrompt(
 	rulebook: RulebookResolution,
 	evidenceWindow: TimelineEvent[],
+	flaggedSignals: string[],
 ): string {
+	// Some trigger kinds (rate-limit hits, cache-ratio drops) aren't visible as text anywhere in
+	// the evidence window itself — the window only shows the surrounding conversation, not the
+	// quantitative fact that caused this window to be flagged in the first place.
+	const signalsSection =
+		flaggedSignals.length > 0
+			? [
+					'',
+					'Flagged signals (not visible in the evidence text itself):',
+					...flaggedSignals.map((signal) => `- ${signal}`),
+				]
+			: [];
+
 	return [
 		"Below is a user's Claude Code rulebook, followed by an evidence window from one of their",
 		'sessions (only the turns around signals worth reviewing, not the full transcript). Report',
@@ -117,6 +130,7 @@ function buildJudgmentPrompt(
 		'',
 		'Rulebook:',
 		describeRulebook(rulebook),
+		...signalsSection,
 		'',
 		'Evidence window:',
 		serializeEvidenceWindow(evidenceWindow),
@@ -177,6 +191,7 @@ function buildJudgmentTool(): Anthropic.ToolUnion {
 async function callJudgmentModel(
 	rulebook: RulebookResolution,
 	evidenceWindow: TimelineEvent[],
+	flaggedSignals: string[],
 	anthropic: JudgmentAnthropicClient,
 ): Promise<Anthropic.Message> {
 	return anthropic.messages.create({
@@ -184,7 +199,12 @@ async function callJudgmentModel(
 		max_tokens: 4096,
 		tools: [buildJudgmentTool()],
 		tool_choice: { type: 'tool', name: JUDGMENT_TOOL_NAME },
-		messages: [{ role: 'user', content: buildJudgmentPrompt(rulebook, evidenceWindow) }],
+		messages: [
+			{
+				role: 'user',
+				content: buildJudgmentPrompt(rulebook, evidenceWindow, flaggedSignals),
+			},
+		],
 	});
 }
 
@@ -293,6 +313,7 @@ export async function runJudgmentCall(
 	auditRunId: string,
 	rulebook: RulebookResolution,
 	evidenceWindow: TimelineEvent[],
+	flaggedSignals: string[],
 	deps: JudgmentDeps = {},
 ): Promise<JudgmentCallOutcome> {
 	const prisma = deps.prisma ?? prismaClient;
@@ -300,7 +321,7 @@ export async function runJudgmentCall(
 
 	let response: Anthropic.Message;
 	try {
-		response = await callJudgmentModel(rulebook, evidenceWindow, anthropic);
+		response = await callJudgmentModel(rulebook, evidenceWindow, flaggedSignals, anthropic);
 	} catch {
 		// The call itself never completed — no usage was ever billed, nothing to log.
 		return { outcome: 'errored', usageLogged: false };
