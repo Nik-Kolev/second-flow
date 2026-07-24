@@ -10,7 +10,7 @@
 		"start": "node dist/server.js",
 		"format": "prettier --write .",
 		"lint": "eslint .",
-		"test": "tsx --test src/parser/__tests__/scrub.test.ts src/parser/__tests__/task-notification.test.ts src/parser/__tests__/classify.test.ts src/parser/__tests__/locate.test.ts src/parser/__tests__/subagent-model.test.ts src/parser/__tests__/index.test.ts src/rulebook/__tests__/locate.test.ts src/rulebook/__tests__/discover.test.ts src/rulebook/__tests__/hooks.test.ts src/rulebook/__tests__/environmental.test.ts src/rulebook/__tests__/index.test.ts src/stats/__tests__/agents.test.ts src/stats/__tests__/context-budget.test.ts src/stats/__tests__/cache.test.ts src/stats/__tests__/rate-limits.test.ts src/stats/__tests__/boundaries.test.ts src/stats/__tests__/index.test.ts src/lint/__tests__/shell-command-label.test.ts src/lint/__tests__/format-before-commit.test.ts"
+		"test": "tsx --test src/parser/__tests__/scrub.test.ts src/parser/__tests__/task-notification.test.ts src/parser/__tests__/classify.test.ts src/parser/__tests__/locate.test.ts src/parser/__tests__/subagent-model.test.ts src/parser/__tests__/index.test.ts src/rulebook/__tests__/locate.test.ts src/rulebook/__tests__/discover.test.ts src/rulebook/__tests__/hooks.test.ts src/rulebook/__tests__/environmental.test.ts src/rulebook/__tests__/index.test.ts src/stats/__tests__/agents.test.ts src/stats/__tests__/context-budget.test.ts src/stats/__tests__/cache.test.ts src/stats/__tests__/rate-limits.test.ts src/stats/__tests__/boundaries.test.ts src/stats/__tests__/index.test.ts src/lint/__tests__/shell-command-label.test.ts src/lint/__tests__/format-before-commit.test.ts src/lint/__tests__/commit-gating.test.ts"
 	},
 	"repository": {
 		"type": "git",
