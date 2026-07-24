@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Second Flow — Audit Dashboard</title>
+		<link rel="stylesheet" href="/styles.css" />
+	</head>
+	<body>
+		<header class="page-header">
+			<h1>Second Flow</h1>
+			<p class="page-subtitle">Audit dashboard — read-only over your config</p>
+		</header>
+
+		<section class="overview" id="overview" aria-label="Overview">
+			<p class="loading" id="loading-message">Loading…</p>
+		</section>
+
+		<div class="tabs-container" id="tabs-container" hidden>
+			<input type="radio" name="tab" id="tab-proposals" class="tab-input" checked />
+			<input type="radio" name="tab" id="tab-notes" class="tab-input" />
+
+			<nav class="tabs">
+				<label for="tab-proposals">Proposals</label>
+				<label for="tab-notes">Notes</label>
+			</nav>
+
+			<section class="panel" id="panel-proposals"></section>
+			<section class="panel" id="panel-notes"></section>
+		</div>
+
+		<button id="back-to-top" type="button" aria-label="Back to top"></button>
+
+		<script src="/app.js" defer></script>
+	</body>
+</html>

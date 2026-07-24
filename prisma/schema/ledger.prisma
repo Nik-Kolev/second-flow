@@ -70,15 +70,18 @@ enum AuditedSessionStatus {
 // Created only for a session that passes Pass 1's gate (src/analysis/gate.ts) — a session waved
 // through cleanly costs nothing and produces nothing, so it gets no row at all.
 model AuditedSession {
-  id                  String               @id @default(cuid())
-  transcriptSessionId String
-  projectSlug         String
-  auditRunId          String
-  auditRun            AuditRun             @relation(fields: [auditRunId], references: [id], onDelete: Cascade)
-  status              AuditedSessionStatus
-  createdAt           DateTime             @default(now())
-  ruleProposals       RuleProposal[]
-  analysisNotes       AnalysisNote[]
+  id                    String               @id @default(cuid())
+  transcriptSessionId   String
+  projectSlug           String
+  auditRunId            String
+  auditRun              AuditRun             @relation(fields: [auditRunId], references: [id], onDelete: Cascade)
+  status                AuditedSessionStatus
+  // Sum of input+output+cacheRead+cacheCreation tokens across every assistant turn in the audited
+  // transcript, set at creation time (pipeline.ts). Null on rows created before step 8 shipped.
+  transcriptTokenTotal  Int?
+  createdAt             DateTime             @default(now())
+  ruleProposals         RuleProposal[]
+  analysisNotes         AnalysisNote[]
 
   @@index([auditRunId])
   @@index([transcriptSessionId])

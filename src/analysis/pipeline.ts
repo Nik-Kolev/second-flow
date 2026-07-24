@@ -21,6 +21,27 @@ export interface JudgmentPipelineInput {
 
 export type PipelineExecDeps = JudgmentDeps & CeilingDeps;
 
+// Sum of input+output+cacheRead+cacheCreation tokens across every assistant turn — unlike
+// context-budget.ts's turnContextTokens (which reads the latest turn only, since each turn's
+// usage already reflects the whole resent conversation for context-window purposes), this is a
+// real cost-style sum: every turn is a separately billed API call, so summing across turns is the
+// correct operation here, not double-counting.
+function sumTranscriptTokens(timeline: TimelineEvent[]): number {
+	let total = 0;
+	for (const event of timeline) {
+		if (event.kind !== 'assistant-turn') {
+			continue;
+		}
+		const { usage } = event;
+		total +=
+			usage.inputTokens +
+			usage.outputTokens +
+			(usage.cacheReadInputTokens ?? 0) +
+			(usage.cacheCreationInputTokens ?? 0);
+	}
+	return total;
+}
+
 export type JudgmentPipelineOutcome =
 	| { outcome: 'wavedThrough' }
 	| { outcome: 'declinedByUser' }
@@ -61,6 +82,8 @@ export async function executeJudgmentForSession(
 ): Promise<JudgmentPipelineOutcome> {
 	const prisma = deps.prisma ?? prismaClient;
 
+	const transcriptTokenTotal = sumTranscriptTokens(input.session.timeline);
+
 	const ceilingResult = await checkCeiling(auditRunId, deps);
 	if (ceilingResult === 'ceilingExceeded') {
 		const auditedSession = await prisma.auditedSession.create({
@@ -69,6 +92,7 @@ export async function executeJudgmentForSession(
 				projectSlug: input.session.projectSlug,
 				auditRunId,
 				status: AuditedSessionStatus.skippedCeiling,
+				transcriptTokenTotal,
 			},
 		});
 		return { outcome: 'skippedCeiling', auditedSessionId: auditedSession.id };
@@ -83,6 +107,7 @@ export async function executeJudgmentForSession(
 			projectSlug: input.session.projectSlug,
 			auditRunId,
 			status: AuditedSessionStatus.completed,
+			transcriptTokenTotal,
 		},
 	});
 

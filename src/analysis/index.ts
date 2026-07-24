@@ -15,7 +15,13 @@ export {
 export type { EvidenceSpan } from './evidence-window.js';
 export { JUDGMENT_PURPOSE, persistJudgmentFindings, runJudgmentCall } from './judgment.js';
 export type { JudgmentCallOutcome, JudgmentDeps, JudgmentFindings } from './judgment.js';
-export { checkCeiling, confirmJudgmentBatch, DEFAULT_MAX_SONNET_CALLS_PER_RUN } from './ceiling.js';
+export {
+	checkCeiling,
+	confirmJudgmentBatch,
+	DEFAULT_MAX_SONNET_CALLS_PER_RUN,
+	getAuditSettings,
+	updateMaxSonnetCallsPerRun,
+} from './ceiling.js';
 export type { CeilingCheckResult, CeilingDeps } from './ceiling.js';
 export {
 	checkGateAndBuildEvidence,

@@ -17,6 +17,12 @@ export default tseslint.config(
 		},
 	},
 	{
+		files: ['public/**/*.js'],
+		languageOptions: {
+			globals: globals.browser,
+		},
+	},
+	{
 		ignores: ['dist/', 'src/generated/'],
 	},
 );

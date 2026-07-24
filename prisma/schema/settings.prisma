@@ -1,0 +1,7 @@
+// Lazily created singleton — no hardcoded id. First read via getAuditSettings() (src/dashboard/settings.ts)
+// creates the row seeded from ceiling.ts's DEFAULT_MAX_SONNET_CALLS_PER_RUN.
+model AuditSettings {
+  id                   String   @id @default(cuid())
+  maxSonnetCallsPerRun Int      @default(10)
+  updatedAt            DateTime @updatedAt
+}
