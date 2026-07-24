@@ -8,6 +8,8 @@ enum RuleProposalStatus {
 
 model RuleProposal {
   id                 String             @id @default(cuid())
+  auditedSessionId   String
+  auditedSession     AuditedSession     @relation(fields: [auditedSessionId], references: [id], onDelete: Cascade)
   targetRuleRef      String
   targetTextSnapshot String
   proposedText       String
@@ -16,28 +18,33 @@ model RuleProposal {
   createdAt          DateTime           @default(now())
 
   @@index([status])
+  @@index([auditedSessionId])
 }
 
-// No producer yet — a future step (7, judgment pass) writes these. Scoped into step 6's schema
-// on purpose, per the project's own roadmap, so the shape exists ahead of the step that fills it.
 enum AnalysisNoteKind {
   promptCoaching
   environmentalInstruction
+  compliance
 }
 
 model AnalysisNote {
-  id        String           @id @default(cuid())
-  kind      AnalysisNoteKind
-  evidence  String
-  createdAt DateTime         @default(now())
+  id               String           @id @default(cuid())
+  auditedSessionId String
+  auditedSession   AuditedSession   @relation(fields: [auditedSessionId], references: [id], onDelete: Cascade)
+  kind             AnalysisNoteKind
+  evidence         String
+  createdAt        DateTime         @default(now())
+
+  @@index([auditedSessionId])
 }
 
 model AuditRun {
-  id          String         @id @default(cuid())
-  startedAt   DateTime       @default(now())
-  completedAt DateTime?
-  createdAt   DateTime       @default(now())
-  calls       AuditRunCall[]
+  id              String           @id @default(cuid())
+  startedAt       DateTime         @default(now())
+  completedAt     DateTime?
+  createdAt       DateTime         @default(now())
+  calls           AuditRunCall[]
+  auditedSessions AuditedSession[]
 }
 
 model AuditRunCall {
@@ -53,4 +60,26 @@ model AuditRunCall {
   createdAt           DateTime @default(now())
 
   @@index([auditRunId])
+}
+
+enum AuditedSessionStatus {
+  completed
+  skippedCeiling
+}
+
+// Created only for a session that passes Pass 1's gate (src/analysis/gate.ts) — a session waved
+// through cleanly costs nothing and produces nothing, so it gets no row at all.
+model AuditedSession {
+  id                  String               @id @default(cuid())
+  transcriptSessionId String
+  projectSlug         String
+  auditRunId          String
+  auditRun            AuditRun             @relation(fields: [auditRunId], references: [id], onDelete: Cascade)
+  status              AuditedSessionStatus
+  createdAt           DateTime             @default(now())
+  ruleProposals       RuleProposal[]
+  analysisNotes       AnalysisNote[]
+
+  @@index([auditRunId])
+  @@index([transcriptSessionId])
 }

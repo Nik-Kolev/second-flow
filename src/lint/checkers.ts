@@ -1,4 +1,5 @@
 import type { TimelineEvent } from '../parser/index.js';
+import { checkBoundaryFollowedByCompact } from './boundary-compact.js';
 import { checkCommitGating } from './commit-gating.js';
 import { checkFormatBeforeCommit } from './format-before-commit.js';
 import { checkShellCommandLabel } from './shell-command-label.js';
@@ -34,5 +35,12 @@ export const CHECKERS: CheckerDefinition[] = [
 			'labeled text block (e.g. a line starting with "RUNNING:") explaining what the ' +
 			'command does before it runs.',
 		check: checkShellCommandLabel,
+	},
+	{
+		id: 'boundary-compact',
+		ruleShapeDescription:
+			'A rule requiring `/compact` to run after completing a logical unit of work (a git ' +
+			'commit, a git push, a `gh pr create`, or a subagent finishing) before continuing.',
+		check: checkBoundaryFollowedByCompact,
 	},
 ];
