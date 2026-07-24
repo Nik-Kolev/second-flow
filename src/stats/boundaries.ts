@@ -7,7 +7,8 @@ const GIT_COMMIT = /\bgit\s+commit\b/i;
 const GIT_PUSH = /\bgit\s+push\b/i;
 const GH_PR_CREATE = /\bgh\s+pr\s+create\b/i;
 
-function extractBashCommand(input: unknown): string | undefined {
+// Shared by any tool whose input is `{ command: string }` — currently Bash and PowerShell.
+export function extractShellCommand(input: unknown): string | undefined {
 	if (typeof input !== 'object' || input === null) {
 		return undefined;
 	}
@@ -19,7 +20,7 @@ function bashBoundaryCandidates(call: ToolCallEvent): BoundaryCandidate[] {
 	if (call.toolName !== 'Bash') {
 		return [];
 	}
-	const command = extractBashCommand(call.input);
+	const command = extractShellCommand(call.input);
 	if (!command) {
 		return [];
 	}
