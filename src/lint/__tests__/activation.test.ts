@@ -97,6 +97,7 @@ test('cache miss calls Haiku once, persists rows, and a second call hits the cac
 		'commit-gating': true,
 		'format-before-commit': false,
 		'shell-command-label': true,
+		'boundary-compact': false,
 	});
 
 	const first = await getActivationMap(rulebook, { prisma: testPrisma, anthropic: fake.client });
@@ -104,6 +105,7 @@ test('cache miss calls Haiku once, persists rows, and a second call hits the cac
 		'commit-gating': true,
 		'format-before-commit': false,
 		'shell-command-label': true,
+		'boundary-compact': false,
 	});
 	assert.equal(fake.calls(), 1);
 
@@ -157,6 +159,7 @@ test('runActivatedCheckers only runs checkers the activation map marks true', as
 		'commit-gating': false,
 		'format-before-commit': false,
 		'shell-command-label': true,
+		'boundary-compact': false,
 	});
 	const timeline = [makeCommitCall()];
 
@@ -175,6 +178,7 @@ test('a stale checker id in the cache is not treated as a complete cache', async
 		'commit-gating': true,
 		'format-before-commit': true,
 		'shell-command-label': true,
+		'boundary-compact': false,
 	});
 	await getActivationMap(rulebook, { prisma: testPrisma, anthropic: seedFake.client });
 
@@ -194,6 +198,7 @@ test('a stale checker id in the cache is not treated as a complete cache', async
 		'commit-gating': true,
 		'format-before-commit': true,
 		'shell-command-label': true,
+		'boundary-compact': false,
 	});
 	const result = await getActivationMap(rulebook, {
 		prisma: testPrisma,
@@ -214,6 +219,7 @@ test('two concurrent calls for the same uncached rulebook only call Haiku once',
 		'commit-gating': true,
 		'format-before-commit': true,
 		'shell-command-label': true,
+		'boundary-compact': false,
 	});
 
 	const [first, second] = await Promise.all([

@@ -6,7 +6,11 @@ import path from 'node:path';
 import { after, before, beforeEach, test } from 'node:test';
 import type Anthropic from '@anthropic-ai/sdk';
 import { PrismaLibSql } from '@prisma/adapter-libsql';
-import { PrismaClient, RuleProposalStatus } from '../../generated/prisma/index.js';
+import {
+	AuditedSessionStatus,
+	PrismaClient,
+	RuleProposalStatus,
+} from '../../generated/prisma/index.js';
 import type { RuleProposal } from '../../generated/prisma/index.js';
 import { createAuditRun, reconcileProposals } from '../ledger.js';
 
@@ -35,8 +39,10 @@ after(async () => {
 // in the table with no per-test scoping — that's the feature. Each test needs a clean slate.
 beforeEach(async () => {
 	await testPrisma.auditRunCall.deleteMany();
-	await testPrisma.auditRun.deleteMany();
 	await testPrisma.ruleProposal.deleteMany();
+	await testPrisma.analysisNote.deleteMany();
+	await testPrisma.auditedSession.deleteMany();
+	await testPrisma.auditRun.deleteMany();
 });
 
 let fixtureCounter = 0;
@@ -53,11 +59,29 @@ interface SeedOverrides {
 	proposedText?: string;
 	evidence?: string;
 	status?: RuleProposalStatus;
+	auditedSessionId?: string;
+}
+
+// RuleProposal has no producer yet in this file's own tests (step 7 owns that) — reconciliation
+// only reads/updates existing rows, so fixtures just need a valid parent to satisfy the FK.
+async function seedAuditedSession(): Promise<string> {
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+	const session = await testPrisma.auditedSession.create({
+		data: {
+			transcriptSessionId: 'fixture-session',
+			projectSlug: 'fixture-project',
+			auditRunId: auditRun.id,
+			status: AuditedSessionStatus.completed,
+		},
+	});
+	return session.id;
 }
 
 async function seedProposal(overrides: SeedOverrides): Promise<RuleProposal> {
+	const auditedSessionId = overrides.auditedSessionId ?? (await seedAuditedSession());
 	return testPrisma.ruleProposal.create({
 		data: {
+			auditedSessionId,
 			targetRuleRef: overrides.targetRuleRef,
 			targetTextSnapshot: overrides.targetTextSnapshot ?? 'Always label shell commands.',
 			proposedText:
