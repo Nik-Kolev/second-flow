@@ -6,7 +6,13 @@ import path from 'node:path';
 import { after, before, beforeEach, test } from 'node:test';
 import { PrismaLibSql } from '@prisma/adapter-libsql';
 import { PrismaClient } from '../../generated/prisma/index.js';
-import { checkCeiling, confirmJudgmentBatch } from '../ceiling.js';
+import {
+	checkCeiling,
+	confirmJudgmentBatch,
+	DEFAULT_MAX_SONNET_CALLS_PER_RUN,
+	getAuditSettings,
+	updateMaxSonnetCallsPerRun,
+} from '../ceiling.js';
 import { JUDGMENT_PURPOSE } from '../judgment.js';
 
 let testPrisma: PrismaClient;
@@ -28,6 +34,7 @@ after(async () => {
 beforeEach(async () => {
 	await testPrisma.auditRunCall.deleteMany();
 	await testPrisma.auditRun.deleteMany();
+	await testPrisma.auditSettings.deleteMany();
 });
 
 async function seedJudgmentCalls(auditRunId: string, count: number): Promise<void> {
@@ -118,4 +125,42 @@ test('confirmJudgmentBatch propagates a declined confirmation', async () => {
 	const result = await confirmJudgmentBatch(1, async () => false);
 
 	assert.equal(result, false);
+});
+
+test('getAuditSettings lazily creates a row seeded from the default on first read', async () => {
+	const settings = await getAuditSettings({ prisma: testPrisma });
+
+	assert.equal(settings.maxSonnetCallsPerRun, DEFAULT_MAX_SONNET_CALLS_PER_RUN);
+	const rows = await testPrisma.auditSettings.findMany();
+	assert.equal(rows.length, 1, 'exactly one settings row should exist after the first read');
+});
+
+test('getAuditSettings returns the same row on subsequent reads, not a new one', async () => {
+	const first = await getAuditSettings({ prisma: testPrisma });
+	const second = await getAuditSettings({ prisma: testPrisma });
+
+	assert.equal(second.id, first.id);
+	const rows = await testPrisma.auditSettings.findMany();
+	assert.equal(rows.length, 1);
+});
+
+test('updateMaxSonnetCallsPerRun persists a new value, readable back with no restart', async () => {
+	await updateMaxSonnetCallsPerRun(25, { prisma: testPrisma });
+
+	const settings = await getAuditSettings({ prisma: testPrisma });
+	assert.equal(settings.maxSonnetCallsPerRun, 25);
+});
+
+test('checkCeiling with no explicit override respects a persisted custom ceiling, not just the hardcoded default', async () => {
+	await updateMaxSonnetCallsPerRun(2, { prisma: testPrisma });
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+	await seedJudgmentCalls(auditRun.id, 2);
+
+	const result = await checkCeiling(auditRun.id, { prisma: testPrisma });
+
+	assert.equal(
+		result,
+		'ceilingExceeded',
+		'2 calls should exceed a persisted ceiling of 2, even though the hardcoded default is higher',
+	);
 });

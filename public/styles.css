@@ -1,0 +1,352 @@
+:root {
+	--surface-page: #0d0d0d;
+	--surface-card: #1a1a19;
+	--ink-primary: #ffffff;
+	--ink-secondary: #c3c2b7;
+	--ink-muted: #898781;
+	--hairline: rgba(255, 255, 255, 0.1);
+	--status-good: #0ca30c;
+	--status-warning: #fab219;
+	--status-serious: #ec835a;
+	--status-critical: #d03b3b;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html {
+	/* Reserves the scrollbar's width permanently, so switching between a tall panel (Notes) and a
+	   short one (Proposals) doesn't add/remove the scrollbar and shift the centered layout sideways. */
+	scrollbar-gutter: stable;
+}
+
+body {
+	margin: 0;
+	background: var(--surface-page);
+	color: var(--ink-primary);
+	font-family:
+		system-ui,
+		-apple-system,
+		'Segoe UI',
+		sans-serif;
+	line-height: 1.5;
+	max-width: 960px;
+	margin: 0 auto;
+	padding: 24px 20px 64px;
+}
+
+h1,
+h2,
+h3 {
+	font-weight: 600;
+	margin: 0;
+}
+
+.page-header {
+	margin-bottom: 24px;
+}
+
+.page-subtitle {
+	color: var(--ink-secondary);
+	margin: 4px 0 0;
+	font-size: 0.9rem;
+}
+
+.loading {
+	color: var(--ink-muted);
+}
+
+/* ---- Overview strip ---- */
+
+.overview {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+	gap: 12px;
+	margin-bottom: 28px;
+}
+
+.banner {
+	grid-column: 1 / -1;
+	background: color-mix(in srgb, var(--status-warning) 15%, var(--surface-card));
+	border: 1px solid var(--status-warning);
+	border-radius: 8px;
+	padding: 12px 16px;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	color: var(--ink-primary);
+}
+
+.banner svg {
+	flex: none;
+	width: 20px;
+	height: 20px;
+	color: var(--status-warning);
+}
+
+.stat-tile,
+.meter-tile {
+	background: var(--surface-card);
+	border: 1px solid var(--hairline);
+	border-radius: 8px;
+	padding: 16px;
+}
+
+.stat-tile .label,
+.meter-tile .label {
+	color: var(--ink-secondary);
+	font-size: 0.85rem;
+	margin: 0 0 6px;
+}
+
+.stat-tile .value {
+	font-size: 1.8rem;
+	font-weight: 600;
+	margin: 0;
+}
+
+.meter-track {
+	background: rgba(255, 255, 255, 0.08);
+	border-radius: 999px;
+	height: 8px;
+	overflow: hidden;
+	margin: 6px 0 8px;
+}
+
+.meter-fill {
+	height: 100%;
+	border-radius: 999px;
+}
+
+.meter-numbers {
+	color: var(--ink-secondary);
+	font-size: 0.85rem;
+}
+
+.ceiling-control {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 10px;
+}
+
+.ceiling-control input[type='number'] {
+	width: 72px;
+	background: var(--surface-page);
+	border: 1px solid var(--hairline);
+	color: var(--ink-primary);
+	border-radius: 4px;
+	padding: 4px 8px;
+	font-size: 0.9rem;
+	/* No native up/down spin buttons — this saves on change (blur/Enter), not by incrementing. */
+	appearance: textfield;
+	-moz-appearance: textfield;
+}
+
+.ceiling-control input[type='number']::-webkit-inner-spin-button,
+.ceiling-control input[type='number']::-webkit-outer-spin-button {
+	appearance: none;
+	margin: 0;
+}
+
+.ceiling-status {
+	font-size: 0.8rem;
+	color: var(--ink-muted);
+	margin-left: 4px;
+}
+
+/* ---- Tabs (radio-button hack — no URL/history side effects) ---- */
+
+.tab-input {
+	position: absolute;
+	opacity: 0;
+	pointer-events: none;
+}
+
+.tabs {
+	display: flex;
+	gap: 4px;
+	border-bottom: 1px solid var(--hairline);
+	margin-bottom: 20px;
+}
+
+.tabs label {
+	padding: 8px 16px;
+	color: var(--ink-secondary);
+	cursor: pointer;
+	border-bottom: 2px solid transparent;
+	font-size: 0.95rem;
+}
+
+#tab-proposals:checked ~ .tabs label[for='tab-proposals'],
+#tab-notes:checked ~ .tabs label[for='tab-notes'] {
+	color: var(--ink-primary);
+	border-bottom-color: var(--ink-primary);
+}
+
+.panel {
+	display: none;
+}
+
+#tab-proposals:checked ~ #panel-proposals,
+#tab-notes:checked ~ #panel-notes {
+	display: block;
+}
+
+/* ---- Findings ---- */
+
+.finding-group {
+	display: flex;
+	gap: 12px;
+}
+
+.finding-list {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.finding-card {
+	background: var(--surface-card);
+	border: 1px solid var(--hairline);
+	border-radius: 8px;
+	padding: 14px 16px;
+}
+
+.finding-card .finding-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 8px;
+	flex-wrap: wrap;
+}
+
+.badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	font-size: 0.8rem;
+	font-weight: 600;
+	border-radius: 999px;
+	padding: 3px 10px 3px 8px;
+	border: 1px solid currentColor;
+}
+
+.badge svg {
+	width: 14px;
+	height: 14px;
+}
+
+.finding-ref {
+	color: var(--ink-secondary);
+	font-size: 0.85rem;
+	word-break: break-all;
+}
+
+.finding-occurrence {
+	color: var(--ink-muted);
+	font-size: 0.8rem;
+}
+
+.finding-text {
+	margin: 6px 0 0;
+	color: var(--ink-primary);
+	font-size: 0.92rem;
+	white-space: pre-wrap;
+}
+
+.finding-evidence {
+	margin-top: 8px;
+	color: var(--ink-secondary);
+	font-size: 0.85rem;
+	white-space: pre-wrap;
+	border-left: 2px solid var(--hairline);
+	padding-left: 10px;
+}
+
+.finding-evidence p {
+	margin: 0 0 8px;
+}
+
+.finding-evidence p:last-child {
+	margin-bottom: 0;
+}
+
+/* Quoted spans (rule wording, a user message, an agent/skill name — evidence text doesn't
+   distinguish which) set apart from the surrounding analysis narration. */
+.evidence-quote {
+	color: var(--ink-primary);
+	font-style: italic;
+	background: rgba(255, 255, 255, 0.06);
+	border-radius: 3px;
+	padding: 0 3px;
+}
+
+.finding-lede {
+	color: var(--ink-primary);
+	font-weight: 600;
+	font-size: 0.95rem;
+	margin: 6px 0 4px;
+}
+
+.kind-heading {
+	color: var(--ink-secondary);
+	font-size: 0.9rem;
+	margin: 20px 0 10px;
+}
+
+.kind-heading:first-child {
+	margin-top: 0;
+}
+
+.empty-state {
+	color: var(--ink-muted);
+	font-size: 0.9rem;
+}
+
+details.more-findings {
+	margin-top: 4px;
+}
+
+details.more-findings summary {
+	color: var(--ink-secondary);
+	cursor: pointer;
+	font-size: 0.85rem;
+	padding: 4px 0;
+}
+
+details.more-findings .finding-list {
+	margin-top: 10px;
+}
+
+/* ---- Back to top ---- */
+
+#back-to-top {
+	position: fixed;
+	right: 20px;
+	bottom: 20px;
+	width: 40px;
+	height: 40px;
+	border-radius: 50%;
+	background: var(--surface-card);
+	border: 1px solid var(--hairline);
+	color: var(--ink-primary);
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.15s ease;
+}
+
+#back-to-top.visible {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+#back-to-top svg {
+	width: 20px;
+	height: 20px;
+}
