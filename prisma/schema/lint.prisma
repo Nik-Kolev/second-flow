@@ -1,0 +1,9 @@
+model CheckerActivation {
+  id           String   @id @default(cuid())
+  rulebookHash String
+  checkerId    String
+  activated    Boolean
+  createdAt    DateTime @default(now())
+
+  @@unique([rulebookHash, checkerId])
+}
