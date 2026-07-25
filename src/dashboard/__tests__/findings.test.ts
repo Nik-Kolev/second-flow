@@ -10,7 +10,7 @@ import {
 	PrismaClient,
 	RuleProposalStatus,
 } from '../../generated/prisma/index.js';
-import { getRankedNotesByKind, getRankedProposalGroups } from '../findings.js';
+import { getRankedProposalGroups } from '../findings.js';
 
 let testPrisma: PrismaClient;
 let tempDir: string;
@@ -184,27 +184,4 @@ test('getRankedProposalGroups breaks status ties by occurrence count', async () 
 		'busy.md',
 		'higher occurrence count should rank first among equal status',
 	);
-});
-
-test('getRankedNotesByKind groups by kind only, with no merging of distinct evidence', async () => {
-	const sessionId = await seedSession();
-	await testPrisma.analysisNote.create({
-		data: { auditedSessionId: sessionId, kind: 'compliance', evidence: 'note A' },
-	});
-	await testPrisma.analysisNote.create({
-		data: { auditedSessionId: sessionId, kind: 'compliance', evidence: 'note B' },
-	});
-	await testPrisma.analysisNote.create({
-		data: { auditedSessionId: sessionId, kind: 'promptCoaching', evidence: 'note C' },
-	});
-
-	const byKind = await getRankedNotesByKind({ prisma: testPrisma });
-
-	assert.equal(
-		byKind.compliance.length,
-		2,
-		'distinct compliance notes must both survive, not merge',
-	);
-	assert.equal(byKind.environmentalInstruction.length, 0);
-	assert.equal(byKind.promptCoaching.length, 1);
 });

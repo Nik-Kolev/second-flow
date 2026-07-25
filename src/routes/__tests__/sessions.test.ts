@@ -112,6 +112,7 @@ function assistantToolCallRecord(command: string): string {
 		},
 		uuid: 'a1',
 		timestamp: '2026-07-20T10:00:01.000Z',
+		cwd: 'C:\\Users\\user\\Documents\\GitHub\\demo-project',
 	});
 }
 
@@ -155,6 +156,7 @@ before(async () => {
 		message: { role: 'user', content: 'hello, just chatting' },
 		uuid: 'u1',
 		timestamp: '2026-07-20T10:00:00.000Z',
+		cwd: 'C:\\Users\\user\\Documents\\GitHub\\demo-project',
 	});
 	// Clean: one user message, nothing the gate could trigger on.
 	await writeFile(path.join(slugDir, `${CLEAN_SESSION}.jsonl`), `${userRecord}\n`);
@@ -213,12 +215,22 @@ test('GET /api/projects lists slugs with session counts, most recent first', asy
 	const res = await fetch(`${baseUrl}/api/projects`);
 	assert.equal(res.status, 200);
 	const body = (await res.json()) as {
-		projects: Array<{ slug: string; sessionCount: number; latestSessionMtime: string }>;
+		projects: Array<{
+			slug: string;
+			sessionCount: number;
+			latestSessionMtime: string;
+			cwd: string | null;
+		}>;
 	};
 	const project = body.projects.find((entry) => entry.slug === SLUG);
 	assert.ok(project, 'the fixture project must be listed');
 	assert.equal(project.sessionCount, 2);
 	assert.ok(project.latestSessionMtime);
+	assert.equal(
+		project.cwd,
+		'C:\\Users\\user\\Documents\\GitHub\\demo-project',
+		'the real cwd peeked from the latest transcript, not the lossy slug',
+	);
 });
 
 test('GET /api/projects/:slug/sessions lists transcripts with null audit state when unaudited', async () => {

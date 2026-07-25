@@ -7,8 +7,7 @@ import {
 	updateMaxSonnetCallsPerRun,
 } from '../analysis/index.js';
 import {
-	getDashboardOverview,
-	getRankedNotesByKind,
+	computeTotalSpendUsd,
 	getRankedProposalGroups,
 	PRICING_PER_MTOK,
 } from '../dashboard/index.js';
@@ -23,45 +22,37 @@ export function createDashboardRouter(deps: DashboardRouterDeps = {}): Router {
 	const prisma = deps.prisma ?? prismaClient;
 	const router = Router();
 
-	// overview/notesByKind are legacy keys the current public/ page still reads — they go away
-	// with the Unit 3 UI rebuild; stats/settings are the shape that UI will consume.
 	router.get('/dashboard', async (_req, res) => {
-		const [
-			overview,
-			proposals,
-			notesByKind,
-			settings,
-			sessionsAudited,
-			openProposals,
-			noteCount,
-		] = await Promise.all([
-			getDashboardOverview(deps),
-			getRankedProposalGroups(deps),
-			getRankedNotesByKind(deps),
-			getAuditSettings(deps),
-			prisma.auditedSession.count(),
-			prisma.ruleProposal.count({
-				where: {
-					status: {
-						in: [
-							RuleProposalStatus.proposed,
-							RuleProposalStatus.needsConfirm,
-							RuleProposalStatus.recurring,
-						],
+		const [calls, proposals, settings, sessionsAudited, openProposals, noteCount, droppedSum] =
+			await Promise.all([
+				prisma.auditRunCall.findMany(),
+				getRankedProposalGroups(deps),
+				getAuditSettings(deps),
+				prisma.auditedSession.count(),
+				prisma.ruleProposal.count({
+					where: {
+						status: {
+							in: [
+								RuleProposalStatus.proposed,
+								RuleProposalStatus.needsConfirm,
+								RuleProposalStatus.recurring,
+							],
+						},
 					},
-				},
-			}),
-			prisma.analysisNote.count(),
-		]);
+				}),
+				prisma.analysisNote.count(),
+				prisma.auditedSession.aggregate({ _sum: { droppedProposalCount: true } }),
+			]);
 		res.json({
-			overview,
 			proposals,
-			notesByKind,
 			stats: {
-				totalSpendUsd: overview.totalSpendUsd,
+				totalSpendUsd: computeTotalSpendUsd(calls),
 				sessionsAudited,
 				openProposalCount: openProposals,
 				noteCount,
+				// Lets the proposals tab distinguish "the model returned 0 proposals" from "proposals
+				// came back but were dropped as invalid" — the exact ambiguity Unit 1 was built to end.
+				droppedProposalTotal: droppedSum._sum.droppedProposalCount ?? 0,
 			},
 			settings: {
 				judgmentModel: settings.judgmentModel,
@@ -87,7 +78,8 @@ export function createDashboardRouter(deps: DashboardRouterDeps = {}): Router {
 	});
 
 	// Read-only over your config everywhere else — this is the one scoped write step 8 makes, and it
-	// only ever touches AuditSettings, never a rulebook/CLAUDE.md file.
+	// only ever touches AuditSettings, never a rulebook/CLAUDE.md file. The ceiling has no UI since
+	// the Unit 3 rebuild (per-audit confirm replaced the meter) but stays functional server-side.
 	router.put('/dashboard/ceiling', async (req, res) => {
 		const value: unknown = req.body?.maxSonnetCallsPerRun;
 		if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 1000) {

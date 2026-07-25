@@ -6,6 +6,7 @@ import { after, before, test } from 'node:test';
 import {
 	findLatestSessionFile,
 	listSessionFiles,
+	peekSessionCwd,
 	resolveProjectsRoot,
 	resolveSessionFilePath,
 	slugFromCwd,
@@ -71,4 +72,48 @@ test('slugFromCwd replaces path separators and colons with dashes', () => {
 		slugFromCwd('C:\\Users\\user\\Documents\\GitHub\\second-flow'),
 		'C--Users-user-Documents-GitHub-second-flow',
 	);
+});
+
+test('peekSessionCwd reads the real cwd from the first record that carries one', async () => {
+	const dir = path.join(tempRoot, 'my-slug');
+	const file = path.join(dir, 'with-cwd.jsonl');
+	await writeFile(
+		file,
+		`${JSON.stringify({ type: 'system', subtype: 'init' })}\n` +
+			`${JSON.stringify({ type: 'user', cwd: 'C:\\Users\\user\\Documents\\GitHub\\second-flow' })}\n`,
+	);
+	assert.equal(await peekSessionCwd(file), 'C:\\Users\\user\\Documents\\GitHub\\second-flow');
+});
+
+test('peekSessionCwd skips a malformed line and keeps looking', async () => {
+	const dir = path.join(tempRoot, 'my-slug');
+	const file = path.join(dir, 'malformed-then-cwd.jsonl');
+	await writeFile(file, `not valid json\n${JSON.stringify({ cwd: '/home/user/project' })}\n`);
+	assert.equal(await peekSessionCwd(file), '/home/user/project');
+});
+
+test('peekSessionCwd returns null when no line carries a cwd', async () => {
+	const dir = path.join(tempRoot, 'my-slug');
+	const file = path.join(dir, 'no-cwd.jsonl');
+	await writeFile(file, `${JSON.stringify({ type: 'system' })}\n`);
+	assert.equal(await peekSessionCwd(file), null);
+});
+
+test('peekSessionCwd returns null for a nonexistent file instead of throwing', async () => {
+	assert.equal(await peekSessionCwd(path.join(tempRoot, 'my-slug', 'ghost.jsonl')), null);
+});
+
+test('peekSessionCwd finds cwd past one huge leading line a fixed byte budget would miss', async () => {
+	const dir = path.join(tempRoot, 'my-slug');
+	const file = path.join(dir, 'huge-leading-line.jsonl');
+	// A real transcript observed in the wild: several tiny metadata lines, then one system-init
+	// record alone over 16KB, before the first line that actually carries cwd.
+	const hugeLine = JSON.stringify({ type: 'system', blob: 'x'.repeat(20_000) });
+	await writeFile(
+		file,
+		`${JSON.stringify({ type: 'mode', mode: 'normal' })}\n` +
+			`${hugeLine}\n` +
+			`${JSON.stringify({ type: 'user', cwd: '/home/user/late-cwd' })}\n`,
+	);
+	assert.equal(await peekSessionCwd(file), '/home/user/late-cwd');
 });
