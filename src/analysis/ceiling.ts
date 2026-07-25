@@ -1,8 +1,15 @@
 import prismaClient from '../lib/prisma.js';
-import type { AuditSettings } from '../generated/prisma/index.js';
 import { JUDGMENT_PURPOSE } from './judgment.js';
+import { getAuditSettings } from './settings.js';
 
-export const DEFAULT_MAX_SONNET_CALLS_PER_RUN = 10;
+// Settings live in settings.ts now (judgment.ts needs them too, and importing them from here
+// would be circular since this file imports JUDGMENT_PURPOSE from judgment.ts) — re-exported so
+// existing importers of ceiling.js keep working unchanged.
+export {
+	DEFAULT_MAX_SONNET_CALLS_PER_RUN,
+	getAuditSettings,
+	updateMaxSonnetCallsPerRun,
+} from './settings.js';
 
 export interface CeilingDeps {
 	prisma?: typeof prismaClient;
@@ -10,33 +17,6 @@ export interface CeilingDeps {
 }
 
 export type CeilingCheckResult = 'ok' | 'ceilingExceeded';
-
-// Lazily created singleton — the first read creates the row, seeded from
-// DEFAULT_MAX_SONNET_CALLS_PER_RUN so there's one source of truth for the starting value. Persisted
-// (not just a runtime default) so the step-8 dashboard's ceiling control can change it with no
-// config file and no restart — checkCeiling below reads through to this on every call.
-export async function getAuditSettings(deps: CeilingDeps = {}): Promise<AuditSettings> {
-	const prisma = deps.prisma ?? prismaClient;
-	const existing = await prisma.auditSettings.findFirst();
-	if (existing) {
-		return existing;
-	}
-	return prisma.auditSettings.create({
-		data: { maxSonnetCallsPerRun: DEFAULT_MAX_SONNET_CALLS_PER_RUN },
-	});
-}
-
-export async function updateMaxSonnetCallsPerRun(
-	value: number,
-	deps: CeilingDeps = {},
-): Promise<AuditSettings> {
-	const prisma = deps.prisma ?? prismaClient;
-	const settings = await getAuditSettings(deps);
-	return prisma.auditSettings.update({
-		where: { id: settings.id },
-		data: { maxSonnetCallsPerRun: value },
-	});
-}
 
 // Queried from the DB (the existing AuditRunCall ledger) rather than an in-memory counter, so
 // the ceiling can't desync across process restarts — same DB-is-the-ledger philosophy step 6 set.

@@ -32,6 +32,10 @@ model AnalysisNote {
   auditedSessionId String
   auditedSession   AuditedSession   @relation(fields: [auditedSessionId], references: [id], onDelete: Cascade)
   kind             AnalysisNoteKind
+  // The rulebook file source this note is about, or "general" when it ties to no single file.
+  // Recurrence detection is a string match on this field. Null only on rows created before the
+  // field existed — displayed as "legacy, no rule link", never matched for recurrence.
+  ruleRef          String?
   evidence         String
   createdAt        DateTime         @default(now())
 
@@ -72,10 +76,12 @@ enum AuditedSessionStatus {
   completed
   skippedCeiling
   errored
+  wavedThrough
 }
 
-// Created only for a session that passes Pass 1's gate (src/analysis/gate.ts) — a session waved
-// through cleanly costs nothing and produces nothing, so it gets no row at all.
+// One row per audit of a session — including sessions Pass 1's gate waves through cleanly
+// (status wavedThrough, written by the audit route): the free check is itself a result worth
+// remembering, so history can say "audited, nothing found" instead of re-reading the transcript.
 model AuditedSession {
   id                    String               @id @default(cuid())
   transcriptSessionId   String
@@ -86,6 +92,10 @@ model AuditedSession {
   // Sum of input+output+cacheRead+cacheCreation tokens across every assistant turn in the audited
   // transcript, set at creation time (pipeline.ts). Null on rows created before step 8 shipped.
   transcriptTokenTotal  Int?
+  // Transcript file stat at audit time — a later size/mtime mismatch means the session continued
+  // after this audit ("changed since audit"), without re-reading the file's content.
+  transcriptFileSize    Int?
+  transcriptFileMtime   DateTime?
   // What the judgment call actually produced: rows persisted, plus proposals Sonnet returned that
   // the valid-source filter dropped (judgment.ts) — the difference between "Sonnet found nothing"
   // and "Sonnet found things we threw away." Null on rows from before the observability pass.

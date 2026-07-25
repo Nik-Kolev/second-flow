@@ -4,10 +4,14 @@ import prismaClient from '../lib/prisma.js';
 import { AnalysisNoteKind } from '../generated/prisma/index.js';
 import type { AssistantContentBlock, TimelineEvent } from '../parser/index.js';
 import type { RulebookResolution } from '../rulebook/index.js';
+import { getAuditSettings } from './settings.js';
 
-const SONNET_MODEL = 'claude-sonnet-5';
 const JUDGMENT_TOOL_NAME = 'report_judgment_findings';
 export const JUDGMENT_PURPOSE = 'judgment';
+
+// The ruleRef a note falls back to when it ties to no single rulebook file — also what an invalid
+// model-invented value is coerced to, so a bad ref degrades to "unlinked" instead of being dropped.
+export const GENERAL_RULE_REF = 'general';
 
 interface JudgmentAnthropicClient {
 	messages: {
@@ -24,6 +28,8 @@ interface JudgmentAnthropicClient {
 export interface JudgmentDeps {
 	prisma?: typeof prismaClient;
 	anthropic?: JudgmentAnthropicClient;
+	// Explicit override wins over the persisted AuditSettings.judgmentModel — primarily for tests.
+	judgmentModel?: string;
 }
 
 interface RuleRewriteProposalInput {
@@ -35,6 +41,7 @@ interface RuleRewriteProposalInput {
 
 interface NoteInput {
 	evidence: string;
+	ruleRef: string;
 }
 
 export interface JudgmentFindings {
@@ -50,7 +57,9 @@ export type JudgmentCallOutcome =
 	| { outcome: 'completed'; findings: JudgmentFindings; droppedProposalCount: number }
 	| { outcome: 'errored'; usageLogged: boolean };
 
-const MAX_FIELD_LENGTH = 300;
+// 600, up from the original 300: truncated evidence was starving the judgment of context, and the
+// input-cost impact is bounded by the evidence window's fixed size, not the transcript's.
+const MAX_FIELD_LENGTH = 600;
 
 function truncate(text: string): string {
 	return text.length > MAX_FIELD_LENGTH ? `${text.slice(0, MAX_FIELD_LENGTH)}…` : text;
@@ -113,6 +122,10 @@ function buildJudgmentPrompt(
 				]
 			: [];
 
+	const fileSources = rulebook.blocks
+		.filter((block) => block.origin === 'file')
+		.map((block) => block.source);
+
 	return [
 		"Below is a user's Claude Code rulebook, followed by an evidence window from one of their",
 		'sessions (only the turns around signals worth reviewing, not the full transcript). Report',
@@ -130,6 +143,11 @@ function buildJudgmentPrompt(
 		'- promptCoachingNotes: an under-specified user prompt had a concrete cost (extra turns,',
 		'  clarifying questions). Secondary — never the headline finding.',
 		'',
+		'Every note carries a ruleRef: the rulebook file the note is about, or exactly',
+		`"${GENERAL_RULE_REF}" when it ties to no single file. Valid ruleRef values:`,
+		...fileSources.map((source) => `- ${source}`),
+		`- ${GENERAL_RULE_REF}`,
+		'',
 		'Rulebook:',
 		describeRulebook(rulebook),
 		...signalsSection,
@@ -144,8 +162,11 @@ function buildJudgmentTool(): Anthropic.ToolUnion {
 		type: 'array' as const,
 		items: {
 			type: 'object' as const,
-			properties: { evidence: { type: 'string' as const } },
-			required: ['evidence'],
+			properties: {
+				evidence: { type: 'string' as const },
+				ruleRef: { type: 'string' as const },
+			},
+			required: ['evidence', 'ruleRef'],
 			additionalProperties: false,
 		},
 	};
@@ -190,14 +211,24 @@ function buildJudgmentTool(): Anthropic.ToolUnion {
 	};
 }
 
-async function callJudgmentModel(
+export interface JudgmentRequestParams {
+	model: string;
+	max_tokens: number;
+	tools: Anthropic.ToolUnion[];
+	tool_choice: { type: 'tool'; name: string };
+	messages: Array<{ role: 'user'; content: string }>;
+}
+
+// Exported so the preview route can feed the exact same request shape to the free count_tokens
+// endpoint — an estimate computed from anything other than the real params would drift.
+export function buildJudgmentRequestParams(
+	model: string,
 	rulebook: RulebookResolution,
 	evidenceWindow: TimelineEvent[],
 	flaggedSignals: string[],
-	anthropic: JudgmentAnthropicClient,
-): Promise<Anthropic.Message> {
-	return anthropic.messages.create({
-		model: SONNET_MODEL,
+): JudgmentRequestParams {
+	return {
+		model,
 		max_tokens: 4096,
 		tools: [buildJudgmentTool()],
 		tool_choice: { type: 'tool', name: JUDGMENT_TOOL_NAME },
@@ -207,7 +238,28 @@ async function callJudgmentModel(
 				content: buildJudgmentPrompt(rulebook, evidenceWindow, flaggedSignals),
 			},
 		],
-	});
+	};
+}
+
+// Explicit deps override first, then the persisted setting — the DB read only happens when no
+// override is given, so tests and the CLI can pin a model without touching AuditSettings.
+export async function resolveJudgmentModel(deps: JudgmentDeps = {}): Promise<string> {
+	if (deps.judgmentModel) {
+		return deps.judgmentModel;
+	}
+	return (await getAuditSettings(deps)).judgmentModel;
+}
+
+async function callJudgmentModel(
+	model: string,
+	rulebook: RulebookResolution,
+	evidenceWindow: TimelineEvent[],
+	flaggedSignals: string[],
+	anthropic: JudgmentAnthropicClient,
+): Promise<Anthropic.Message> {
+	return anthropic.messages.create(
+		buildJudgmentRequestParams(model, rulebook, evidenceWindow, flaggedSignals),
+	);
 }
 
 function validateNoteArray(value: unknown, fieldName: string): NoteInput[] {
@@ -218,13 +270,15 @@ function validateNoteArray(value: unknown, fieldName: string): NoteInput[] {
 		if (
 			typeof item !== 'object' ||
 			item === null ||
-			typeof (item as { evidence?: unknown }).evidence !== 'string'
+			typeof (item as { evidence?: unknown }).evidence !== 'string' ||
+			typeof (item as { ruleRef?: unknown }).ruleRef !== 'string'
 		) {
 			throw new Error(
-				`Judgment classification's "${fieldName}" has an entry missing a string evidence field`,
+				`Judgment classification's "${fieldName}" has an entry missing a string evidence or ruleRef field`,
 			);
 		}
-		return { evidence: (item as { evidence: string }).evidence };
+		const record = item as { evidence: string; ruleRef: string };
+		return { evidence: record.evidence, ruleRef: record.ruleRef };
 	});
 }
 
@@ -295,13 +349,14 @@ function validFileSources(rulebook: RulebookResolution): Set<string> {
 
 async function logAuditRunCall(
 	auditRunId: string,
+	model: string,
 	usage: Anthropic.Usage,
 	prisma: typeof prismaClient,
 ): Promise<string> {
 	const call = await prisma.auditRunCall.create({
 		data: {
 			auditRunId,
-			model: SONNET_MODEL,
+			model,
 			purpose: JUDGMENT_PURPOSE,
 			inputTokens: usage.input_tokens,
 			outputTokens: usage.output_tokens,
@@ -321,10 +376,17 @@ export async function runJudgmentCall(
 ): Promise<JudgmentCallOutcome> {
 	const prisma = deps.prisma ?? prismaClient;
 	const anthropic = deps.anthropic ?? anthropicClient;
+	const model = await resolveJudgmentModel(deps);
 
 	let response: Anthropic.Message;
 	try {
-		response = await callJudgmentModel(rulebook, evidenceWindow, flaggedSignals, anthropic);
+		response = await callJudgmentModel(
+			model,
+			rulebook,
+			evidenceWindow,
+			flaggedSignals,
+			anthropic,
+		);
 	} catch {
 		// The call itself never completed — no usage was ever billed, nothing to log.
 		return { outcome: 'errored', usageLogged: false };
@@ -332,7 +394,21 @@ export async function runJudgmentCall(
 
 	// The call succeeded and real tokens were spent, regardless of whether the response content
 	// below parses cleanly — log the spend before attempting to interpret the findings.
-	const callId = await logAuditRunCall(auditRunId, response.usage, prisma);
+	const callId = await logAuditRunCall(auditRunId, model, response.usage, prisma);
+
+	// Opus 5/Fable 5 streaming classifiers can end a billed response with stop_reason 'refusal' —
+	// no tool_use block follows, so treat it as an errored call with its own explanation rather
+	// than letting extraction fail with a misleading "no tool_use block" message.
+	if (response.stop_reason === 'refusal') {
+		await prisma.auditRunCall.update({
+			where: { id: callId },
+			data: {
+				rawResponse: JSON.stringify(response),
+				errorText: `Model ${model} refused the request (stop_reason: refusal)`,
+			},
+		});
+		return { outcome: 'errored', usageLogged: true };
+	}
 
 	try {
 		const findings = extractJudgmentFindings(response);
@@ -341,6 +417,20 @@ export async function runJudgmentCall(
 		findings.ruleRewriteProposals = findings.ruleRewriteProposals.filter((proposal) =>
 			validSources.has(proposal.targetRuleRef),
 		);
+		// Notes degrade instead of dropping: an invented ruleRef would recreate for notes the exact
+		// silent-filter bug the proposal counter above exists to expose — coerce to "general" so the
+		// note survives, merely unlinked from a file.
+		for (const noteArray of [
+			findings.complianceNotes,
+			findings.environmentalInstructionIgnoredNotes,
+			findings.promptCoachingNotes,
+		]) {
+			for (const note of noteArray) {
+				if (note.ruleRef !== GENERAL_RULE_REF && !validSources.has(note.ruleRef)) {
+					note.ruleRef = GENERAL_RULE_REF;
+				}
+			}
+		}
 		return {
 			outcome: 'completed',
 			findings,
@@ -387,7 +477,7 @@ export async function persistJudgmentFindings(
 	for (const [kind, notes] of noteGroups) {
 		for (const note of notes) {
 			await prisma.analysisNote.create({
-				data: { auditedSessionId, kind, evidence: note.evidence },
+				data: { auditedSessionId, kind, evidence: note.evidence, ruleRef: note.ruleRef },
 			});
 			notesCreated++;
 		}

@@ -17,6 +17,10 @@ export interface JudgmentPipelineInput {
 	stats: SessionStats;
 	lintFindings: LintFinding[];
 	rulebook: RulebookResolution;
+	// Transcript file stat taken by the caller before parsing — persisted on the AuditedSession row
+	// so a later size/mtime mismatch can flag "changed since audit". Optional: the CLI path doesn't
+	// stat, and rows created without it just can't be change-checked (null columns).
+	transcriptFileStat?: { size: number; mtime: Date };
 }
 
 export type PipelineExecDeps = JudgmentDeps & CeilingDeps;
@@ -25,8 +29,9 @@ export type PipelineExecDeps = JudgmentDeps & CeilingDeps;
 // context-budget.ts's turnContextTokens (which reads the latest turn only, since each turn's
 // usage already reflects the whole resent conversation for context-window purposes), this is a
 // real cost-style sum: every turn is a separately billed API call, so summing across turns is the
-// correct operation here, not double-counting.
-function sumTranscriptTokens(timeline: TimelineEvent[]): number {
+// correct operation here, not double-counting. Exported for the audit route's wavedThrough rows,
+// which are created outside this module but must record the same total.
+export function sumTranscriptTokens(timeline: TimelineEvent[]): number {
 	let total = 0;
 	for (const event of timeline) {
 		if (event.kind !== 'assistant-turn') {
@@ -94,6 +99,8 @@ export async function executeJudgmentForSession(
 				auditRunId,
 				status: AuditedSessionStatus.skippedCeiling,
 				transcriptTokenTotal,
+				transcriptFileSize: input.transcriptFileStat?.size,
+				transcriptFileMtime: input.transcriptFileStat?.mtime,
 			},
 		});
 		return { outcome: 'skippedCeiling', auditedSessionId: auditedSession.id };
@@ -109,6 +116,8 @@ export async function executeJudgmentForSession(
 			auditRunId,
 			status: AuditedSessionStatus.completed,
 			transcriptTokenTotal,
+			transcriptFileSize: input.transcriptFileStat?.size,
+			transcriptFileMtime: input.transcriptFileStat?.mtime,
 		},
 	});
 
