@@ -178,12 +178,15 @@ test('a well-formed response returns completed findings and logs a Sonnet AuditR
 	assert.equal(outcome.findings.ruleRewriteProposals.length, 1);
 	assert.equal(outcome.findings.complianceNotes.length, 1);
 	assert.equal(outcome.findings.promptCoachingNotes.length, 1);
+	assert.equal(outcome.droppedProposalCount, 0);
 
 	const callRows = await testPrisma.auditRunCall.findMany({ where: { auditRunId: auditRun.id } });
 	assert.equal(callRows.length, 1);
 	assert.equal(callRows[0].model, 'claude-sonnet-5');
 	assert.equal(callRows[0].purpose, JUDGMENT_PURPOSE);
 	assert.equal(callRows[0].inputTokens, FAKE_USAGE.input_tokens);
+	assert.equal(callRows[0].rawResponse, null, 'a cleanly-parsed call stores no raw response');
+	assert.equal(callRows[0].errorText, null);
 });
 
 test('flagged signals (e.g. a rate-limit hit not visible in the evidence text) reach the prompt', async () => {
@@ -242,6 +245,11 @@ test("a rule-rewrite proposal citing a targetRuleRef outside the rulebook's file
 		'only the proposal citing a real rulebook file block should survive',
 	);
 	assert.equal(outcome.findings.ruleRewriteProposals[0].targetRuleRef, 'CLAUDE.md');
+	assert.equal(
+		outcome.droppedProposalCount,
+		1,
+		'a silently-filtered proposal must be counted, never invisible',
+	);
 });
 
 test('persistJudgmentFindings writes RuleProposal and AnalysisNote rows against the right session', async () => {
@@ -298,6 +306,13 @@ test('a malformed tool input is isolated: errored, but spend is logged', async (
 	}
 	const callRows = await testPrisma.auditRunCall.findMany({ where: { auditRunId: auditRun.id } });
 	assert.equal(callRows.length, 1, 'the call succeeded and real tokens were spent');
+	assert.ok(
+		callRows[0].rawResponse,
+		'the discarded response must survive on the call row for reconstruction',
+	);
+	const raw = JSON.parse(callRows[0].rawResponse) as { content: unknown };
+	assert.ok(Array.isArray(raw.content), 'rawResponse must round-trip as the full API message');
+	assert.match(callRows[0].errorText ?? '', /ruleRewriteProposals/);
 });
 
 test('a response with no tool_use block is isolated: errored, but spend is logged', async () => {
@@ -312,6 +327,8 @@ test('a response with no tool_use block is isolated: errored, but spend is logge
 	assert.equal(outcome.outcome, 'errored');
 	const callRows = await testPrisma.auditRunCall.findMany({ where: { auditRunId: auditRun.id } });
 	assert.equal(callRows.length, 1);
+	assert.ok(callRows[0].rawResponse);
+	assert.match(callRows[0].errorText ?? '', /no tool_use block/);
 });
 
 test('a simulated network failure logs zero spend and does not throw', async () => {

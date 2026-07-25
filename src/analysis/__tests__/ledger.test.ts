@@ -12,7 +12,7 @@ import {
 	RuleProposalStatus,
 } from '../../generated/prisma/index.js';
 import type { RuleProposal } from '../../generated/prisma/index.js';
-import { createAuditRun, reconcileProposals } from '../ledger.js';
+import { createAuditRun, reconcileProposals, runStartupReconciliation } from '../ledger.js';
 
 let testPrisma: PrismaClient;
 let tempDir: string;
@@ -506,6 +506,50 @@ test('createAuditRun produces a usable row that reconcileProposals can be scoped
 		anthropic: fake.client,
 	});
 	assert.equal(summary.noOp, 1);
+});
+
+test('runStartupReconciliation with an empty ledger returns null and creates no AuditRun', async () => {
+	const fake = makeFakeAnthropic([]);
+
+	const result = await runStartupReconciliation({ prisma: testPrisma, anthropic: fake.client });
+
+	assert.equal(result, null);
+	assert.equal(fake.calls(), 0);
+	const runs = await testPrisma.auditRun.findMany();
+	assert.equal(runs.length, 0, 'the zero-proposal fast path must not create a run at all');
+});
+
+test('runStartupReconciliation with an outstanding proposal reconciles it and completes its run', async () => {
+	const filePath = await writeFixture('Wording changed since the proposal was made.');
+	const proposal = await seedProposal({
+		targetRuleRef: filePath,
+		targetTextSnapshot: 'Original wording, now gone.',
+	});
+	const fake = makeFakeAnthropic([{ addressed: true }]);
+
+	const result = await runStartupReconciliation({ prisma: testPrisma, anthropic: fake.client });
+
+	assert.ok(result, 'a non-empty ledger must actually run reconciliation');
+	assert.equal(result.totalProposed, 1);
+	assert.equal(result.resolved, 1);
+
+	const refreshed = await testPrisma.ruleProposal.findUniqueOrThrow({
+		where: { id: proposal.id },
+	});
+	assert.equal(refreshed.status, RuleProposalStatus.resolved);
+
+	// Two runs exist: the FK-parent run behind the seeded AuditedSession (never completed) and the
+	// one runStartupReconciliation created for itself — which must be the completed one, with the
+	// Haiku spend logged against it.
+	const runs = await testPrisma.auditRun.findMany();
+	assert.equal(runs.length, 2);
+	const reconcileRun = runs.find((run) => run.completedAt !== null);
+	assert.ok(reconcileRun, 'the reconciliation run must be marked completed when done');
+	const callRows = await testPrisma.auditRunCall.findMany({
+		where: { auditRunId: reconcileRun.id },
+	});
+	assert.equal(callRows.length, 1);
+	assert.equal(callRows[0].purpose, 'reconciliation');
 });
 
 test('a proposal that keeps failing reconciliation triggers a fresh Haiku call on every run', async () => {
