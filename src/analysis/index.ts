@@ -18,8 +18,20 @@ export {
 	WHOLE_TIMELINE_FALLBACK_THRESHOLD,
 } from './evidence-window.js';
 export type { EvidenceSpan } from './evidence-window.js';
-export { JUDGMENT_PURPOSE, persistJudgmentFindings, runJudgmentCall } from './judgment.js';
-export type { JudgmentCallOutcome, JudgmentDeps, JudgmentFindings } from './judgment.js';
+export {
+	buildJudgmentRequestParams,
+	GENERAL_RULE_REF,
+	JUDGMENT_PURPOSE,
+	persistJudgmentFindings,
+	resolveJudgmentModel,
+	runJudgmentCall,
+} from './judgment.js';
+export type {
+	JudgmentCallOutcome,
+	JudgmentDeps,
+	JudgmentFindings,
+	JudgmentRequestParams,
+} from './judgment.js';
 export {
 	checkCeiling,
 	confirmJudgmentBatch,
@@ -28,10 +40,13 @@ export {
 	updateMaxSonnetCallsPerRun,
 } from './ceiling.js';
 export type { CeilingCheckResult, CeilingDeps } from './ceiling.js';
+export { isJudgmentModel, JUDGMENT_MODELS, updateJudgmentModel } from './settings.js';
+export type { JudgmentModel, SettingsDeps } from './settings.js';
 export {
 	checkGateAndBuildEvidence,
 	executeJudgmentForSession,
 	runJudgmentPipelineForSession,
+	sumTranscriptTokens,
 } from './pipeline.js';
 export type {
 	JudgmentPipelineInput,

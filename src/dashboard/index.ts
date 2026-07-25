@@ -9,3 +9,5 @@ export {
 export type { FindingsDeps, ProposalGroup } from './findings.js';
 export { getDashboardOverview } from './overview.js';
 export type { DashboardOverview, OverviewDeps } from './overview.js';
+export { getNoteRecurrenceForSession } from './recurrence.js';
+export type { RecurrenceMarker } from './recurrence.js';

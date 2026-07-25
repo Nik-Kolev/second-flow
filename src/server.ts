@@ -2,7 +2,8 @@ import './env.js';
 import path from 'node:path';
 import express from 'express';
 import { runStartupReconciliation } from './analysis/index.js';
-import dashboardRouter from './routes/dashboard.js';
+import { createDashboardRouter } from './routes/dashboard.js';
+import { createSessionsRouter } from './routes/sessions.js';
 
 const app = express();
 const PORT = process.env.PORT ?? 3000;
@@ -13,7 +14,8 @@ const PORT = process.env.PORT ?? 3000;
 const publicDir = path.join(import.meta.dirname, '..', 'public');
 app.use(express.static(publicDir));
 app.use(express.json());
-app.use('/api', dashboardRouter);
+app.use('/api', createDashboardRouter());
+app.use('/api', createSessionsRouter());
 
 app.listen(PORT, () => {
 	console.log(`listening on port ${PORT}`);
