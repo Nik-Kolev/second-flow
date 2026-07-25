@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import type { ToolCallEvent } from '../../parser/types.js';
 import {
 	resolveGlobalClaudeMdPath,
 	resolveProjectClaudeMdPath,
@@ -23,7 +24,21 @@ function emptyBucket(overrides: Partial<AttachmentBucket> = {}): AttachmentBucke
 	};
 }
 
-test('combines all four sources with correct diagnostics', async () => {
+function readCall(filePath: string): ToolCallEvent {
+	return {
+		kind: 'tool-call',
+		toolUseId: 'toolu_read',
+		toolName: 'Read',
+		input: { file_path: filePath },
+		callerUuid: 'assistant-1',
+		callTimestamp: '2026-07-26T00:00:00.000Z',
+		isSubagentSpawn: false,
+		isBackground: false,
+		result: { kind: 'sync', text: 'irrelevant — memory.ts re-reads from disk' },
+	};
+}
+
+test('combines all five sources with correct diagnostics', async () => {
 	const homeDir = await mkdtemp(path.join(os.tmpdir(), 'second-flow-rulebook-index-test-'));
 	await mkdir(path.join(homeDir, '.claude'), { recursive: true });
 	await writeFile(path.join(homeDir, '.claude', 'CLAUDE.md'), 'global rule text');
@@ -36,7 +51,7 @@ test('combines all four sources with correct diagnostics', async () => {
 		outputStyle: [{ style: 'Explanatory' }],
 	});
 
-	const resolution = await resolveRulebook(attachments, { cwd }, { homeDir });
+	const resolution = await resolveRulebook(attachments, { cwd }, [], { homeDir });
 
 	assert.equal(resolution.blocks.length, 4);
 	assert.deepEqual(
@@ -53,12 +68,30 @@ test('combines all four sources with correct diagnostics', async () => {
 	});
 	assert.equal(resolution.sources.hook.count, 1);
 	assert.equal(resolution.sources.environmental.count, 1);
+	assert.equal(resolution.sources.memory.count, 0);
 });
 
-test('no project block and null project path when meta.cwd is undefined', async () => {
+test('a Read of a global memory file adds a memory block, appended last', async () => {
+	const homeDir = await mkdtemp(path.join(os.tmpdir(), 'second-flow-rulebook-index-test-'));
+	await mkdir(path.join(homeDir, '.claude', 'memory'), { recursive: true });
+	const memoryFile = path.join(homeDir, '.claude', 'memory', 'gotcha.md');
+	await writeFile(memoryFile, 'a documented gotcha');
+
+	const cwd = await mkdtemp(path.join(os.tmpdir(), 'second-flow-rulebook-index-cwd-test-'));
+
+	const resolution = await resolveRulebook(emptyBucket(), { cwd }, [readCall(memoryFile)], {
+		homeDir,
+	});
+
+	assert.equal(resolution.sources.memory.count, 1);
+	assert.equal(resolution.blocks.at(-1)?.origin, 'memory');
+	assert.equal(resolution.blocks.at(-1)?.text, 'a documented gotcha');
+});
+
+test('no project block, null project path, and no memory discovery when meta.cwd is undefined', async () => {
 	const homeDir = await mkdtemp(path.join(os.tmpdir(), 'second-flow-rulebook-index-test-'));
 
-	const resolution = await resolveRulebook(emptyBucket(), {}, { homeDir });
+	const resolution = await resolveRulebook(emptyBucket(), {}, [], { homeDir });
 
 	assert.equal(resolution.sources.project.path, null);
 	assert.equal(resolution.sources.project.found, false);
@@ -66,15 +99,17 @@ test('no project block and null project path when meta.cwd is undefined', async 
 		resolution.blocks.some((b) => b.layer === 'project'),
 		false,
 	);
+	assert.equal(resolution.sources.memory.count, 0);
 });
 
 test('empty resolution when nothing is present anywhere', async () => {
 	const homeDir = await mkdtemp(path.join(os.tmpdir(), 'second-flow-rulebook-index-test-'));
 
-	const resolution = await resolveRulebook(emptyBucket(), {}, { homeDir });
+	const resolution = await resolveRulebook(emptyBucket(), {}, [], { homeDir });
 
 	assert.deepEqual(resolution.blocks, []);
 	assert.equal(resolution.sources.global.found, false);
 	assert.equal(resolution.sources.hook.count, 0);
 	assert.equal(resolution.sources.environmental.count, 0);
+	assert.equal(resolution.sources.memory.count, 0);
 });

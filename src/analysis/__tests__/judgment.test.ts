@@ -60,21 +60,34 @@ async function seedAuditedSession(): Promise<string> {
 	return session.id;
 }
 
-function makeRulebook(): RulebookResolution {
+const MEMORY_BLOCK_SOURCE = '/home/.claude/memory/gotcha.md';
+
+function makeRulebook(opts: { withMemoryBlock?: boolean } = {}): RulebookResolution {
+	const blocks: RulebookResolution['blocks'] = [
+		{
+			origin: 'file',
+			layer: 'user',
+			source: 'CLAUDE.md',
+			text: 'Always label shell commands.',
+		},
+	];
+	if (opts.withMemoryBlock) {
+		blocks.push({
+			origin: 'memory',
+			layer: 'memory',
+			sourceKind: 'global-memory',
+			source: MEMORY_BLOCK_SOURCE,
+			text: 'Do not skip the format step before committing.',
+		});
+	}
 	return {
-		blocks: [
-			{
-				origin: 'file',
-				layer: 'user',
-				source: 'CLAUDE.md',
-				text: 'Always label shell commands.',
-			},
-		],
+		blocks,
 		sources: {
 			global: { path: 'CLAUDE.md', found: true },
 			project: { path: null, found: false },
 			hook: { count: 0 },
 			environmental: { count: 0 },
+			memory: { count: opts.withMemoryBlock ? 1 : 0 },
 		},
 	};
 }
@@ -256,6 +269,72 @@ test("a rule-rewrite proposal citing a targetRuleRef outside the rulebook's file
 		outcome.droppedProposalCount,
 		1,
 		'a silently-filtered proposal must be counted, never invisible',
+	);
+});
+
+test('a note citing a memory-block source is preserved, not coerced to "general"', async () => {
+	const input = wellFormedInput();
+	input.complianceNotes = [
+		{ evidence: 'turn 5: ignored a documented gotcha', ruleRef: MEMORY_BLOCK_SOURCE },
+	];
+	const fake = makeFakeAnthropic(input);
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+
+	const outcome = await runJudgmentCall(
+		auditRun.id,
+		makeRulebook({ withMemoryBlock: true }),
+		makeEvidenceWindow(),
+		[],
+		{ prisma: testPrisma, anthropic: fake.client },
+	);
+
+	assert.equal(outcome.outcome, 'completed');
+	if (outcome.outcome !== 'completed') {
+		return;
+	}
+	assert.equal(
+		outcome.findings.complianceNotes[0].ruleRef,
+		MEMORY_BLOCK_SOURCE,
+		'a note may cite a memory/stack file by path — only proposals are restricted to CLAUDE.md files',
+	);
+});
+
+test('a rule-rewrite proposal citing a memory-block source is dropped — memory files are never rewrite targets', async () => {
+	const input = wellFormedInput();
+	input.ruleRewriteProposals = [
+		...(input.ruleRewriteProposals as unknown[]),
+		{
+			targetRuleRef: MEMORY_BLOCK_SOURCE,
+			targetTextSnapshot: 'Do not skip the format step before committing.',
+			proposedText: 'Some invented rewrite of a memory file.',
+			evidence: 'turn 9: proposal targeting a memory file',
+		},
+	];
+	const fake = makeFakeAnthropic(input);
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+
+	const outcome = await runJudgmentCall(
+		auditRun.id,
+		makeRulebook({ withMemoryBlock: true }),
+		makeEvidenceWindow(),
+		[],
+		{ prisma: testPrisma, anthropic: fake.client },
+	);
+
+	assert.equal(outcome.outcome, 'completed');
+	if (outcome.outcome !== 'completed') {
+		return;
+	}
+	assert.equal(
+		outcome.findings.ruleRewriteProposals.length,
+		1,
+		'only the proposal citing the real CLAUDE.md file block should survive',
+	);
+	assert.equal(outcome.findings.ruleRewriteProposals[0].targetRuleRef, 'CLAUDE.md');
+	assert.equal(
+		outcome.droppedProposalCount,
+		1,
+		'a proposal targeting a memory/stack file must be dropped and counted, same as any other invalid target',
 	);
 });
 
