@@ -402,6 +402,12 @@ code,
 	margin: 0;
 }
 
+.session-summary .summary-actions {
+	display: flex;
+	justify-content: flex-end;
+	margin-top: 10px;
+}
+
 .finding-list {
 	display: flex;
 	flex-direction: column;
@@ -449,6 +455,14 @@ code,
 .finding-occurrence {
 	color: var(--ink-muted);
 	font-size: 0.8rem;
+}
+
+.finding-field-label {
+	margin: 8px 0 0;
+	color: var(--ink-muted);
+	font-size: 0.75rem;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
 }
 
 .finding-text {
@@ -661,7 +675,8 @@ details.more-findings .finding-list {
 	margin-top: 14px;
 }
 
-.dialog-actions button {
+.dialog-actions button,
+.session-summary .summary-actions button {
 	border-radius: 6px;
 	padding: 8px 14px;
 	font-size: 0.9rem;
