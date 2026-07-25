@@ -301,6 +301,37 @@ test("the happy path creates a completed AuditedSession plus correctly FK'd find
 	assert.equal(proposals[0].targetRuleRef, 'CLAUDE.md');
 });
 
+test('a provided transcriptFileStat is persisted onto the AuditedSession row', async () => {
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+	const timeline = [makeToolCall('call-a')];
+	const lintFindings: LintFinding[] = [
+		{
+			checkerId: 'commit-gating',
+			toolUseId: 'call-a',
+			timestamp: 't',
+			evidence: 'no approval',
+		},
+	];
+	const mtime = new Date('2026-07-25T10:00:00.000Z');
+	const input = {
+		session: makeSession(timeline),
+		stats: emptyStats(),
+		lintFindings,
+		rulebook: makeRulebook(),
+		transcriptFileStat: { size: 12345, mtime },
+	};
+
+	const outcome = await runJudgmentPipelineForSession(input, auditRun.id, async () => true, {
+		prisma: testPrisma,
+		anthropic: makeWellFormedAnthropic(),
+	});
+
+	assert.equal(outcome.outcome, 'completed');
+	const sessions = await testPrisma.auditedSession.findMany();
+	assert.equal(sessions[0].transcriptFileSize, 12345);
+	assert.equal(sessions[0].transcriptFileMtime?.getTime(), mtime.getTime());
+});
+
 test('an errored Sonnet call flips the AuditedSession to errored, finding counts stay null', async () => {
 	const auditRun = await testPrisma.auditRun.create({ data: {} });
 	const timeline = [makeToolCall('call-a')];

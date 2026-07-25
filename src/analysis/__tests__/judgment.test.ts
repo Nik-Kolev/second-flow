@@ -42,6 +42,9 @@ beforeEach(async () => {
 	await testPrisma.analysisNote.deleteMany();
 	await testPrisma.auditedSession.deleteMany();
 	await testPrisma.auditRun.deleteMany();
+	// Model resolution reads AuditSettings when no deps override is given — each test starts from
+	// an unseeded settings table so the lazily-created default is deterministic.
+	await testPrisma.auditSettings.deleteMany();
 });
 
 async function seedAuditedSession(): Promise<string> {
@@ -156,9 +159,13 @@ function wellFormedInput(): JudgmentToolInput {
 				evidence: 'turn 3: unlabeled shell command',
 			},
 		],
-		complianceNotes: [{ evidence: 'turn 5: format-before-commit followed correctly' }],
+		complianceNotes: [
+			{ evidence: 'turn 5: format-before-commit followed correctly', ruleRef: 'CLAUDE.md' },
+		],
 		environmentalInstructionIgnoredNotes: [],
-		promptCoachingNotes: [{ evidence: 'turn 1: vague prompt caused 2 clarifying questions' }],
+		promptCoachingNotes: [
+			{ evidence: 'turn 1: vague prompt caused 2 clarifying questions', ruleRef: 'general' },
+		],
 	};
 }
 
@@ -263,9 +270,12 @@ test('persistJudgmentFindings writes RuleProposal and AnalysisNote rows against 
 				evidence: 'turn 3',
 			},
 		],
-		complianceNotes: [{ evidence: 'turn 5' }],
-		environmentalInstructionIgnoredNotes: [{ evidence: 'turn 7' }],
-		promptCoachingNotes: [{ evidence: 'turn 1' }, { evidence: 'turn 2' }],
+		complianceNotes: [{ evidence: 'turn 5', ruleRef: 'CLAUDE.md' }],
+		environmentalInstructionIgnoredNotes: [{ evidence: 'turn 7', ruleRef: 'general' }],
+		promptCoachingNotes: [
+			{ evidence: 'turn 1', ruleRef: 'general' },
+			{ evidence: 'turn 2', ruleRef: 'general' },
+		],
 	};
 
 	const result = await persistJudgmentFindings(auditedSessionId, findings, testPrisma);
@@ -279,6 +289,8 @@ test('persistJudgmentFindings writes RuleProposal and AnalysisNote rows against 
 
 	const notes = await testPrisma.analysisNote.findMany({ where: { auditedSessionId } });
 	assert.equal(notes.length, 4);
+	const complianceNote = notes.find((note) => note.kind === AnalysisNoteKind.compliance);
+	assert.equal(complianceNote?.ruleRef, 'CLAUDE.md', 'ruleRef must be persisted on the row');
 	const kinds = notes.map((note) => note.kind).sort();
 	assert.deepEqual(
 		kinds,
@@ -329,6 +341,128 @@ test('a response with no tool_use block is isolated: errored, but spend is logge
 	assert.equal(callRows.length, 1);
 	assert.ok(callRows[0].rawResponse);
 	assert.match(callRows[0].errorText ?? '', /no tool_use block/);
+});
+
+test('a note citing an invented ruleRef is coerced to "general", never dropped', async () => {
+	const input = wellFormedInput();
+	input.complianceNotes = [
+		{ evidence: 'turn 5: real note, invented file ref', ruleRef: 'invented-file.md' },
+	];
+	const fake = makeFakeAnthropic(input);
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+
+	const outcome = await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), [], {
+		prisma: testPrisma,
+		anthropic: fake.client,
+	});
+
+	assert.equal(outcome.outcome, 'completed');
+	if (outcome.outcome !== 'completed') {
+		return;
+	}
+	assert.equal(outcome.findings.complianceNotes.length, 1, 'the note must survive');
+	assert.equal(
+		outcome.findings.complianceNotes[0].ruleRef,
+		'general',
+		'an invalid ruleRef degrades to "general" instead of silently dropping the note',
+	);
+});
+
+test('a note missing its ruleRef is a parse failure: errored, spend logged, raw response kept', async () => {
+	const input = wellFormedInput();
+	input.complianceNotes = [{ evidence: 'note with no ruleRef at all' }];
+	const fake = makeFakeAnthropic(input);
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+
+	const outcome = await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), [], {
+		prisma: testPrisma,
+		anthropic: fake.client,
+	});
+
+	assert.equal(outcome.outcome, 'errored');
+	const callRows = await testPrisma.auditRunCall.findMany({ where: { auditRunId: auditRun.id } });
+	assert.equal(callRows.length, 1);
+	assert.match(callRows[0].errorText ?? '', /ruleRef/);
+});
+
+test('the prompt lists the valid ruleRef values for notes', async () => {
+	const fake = makeFakeAnthropic(wellFormedInput());
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+
+	await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), [], {
+		prisma: testPrisma,
+		anthropic: fake.client,
+	});
+
+	const requestParams = fake.lastParams() as { messages: Array<{ content: string }> };
+	assert.ok(requestParams.messages[0].content.includes('Valid ruleRef values'));
+	assert.ok(requestParams.messages[0].content.includes('- CLAUDE.md'));
+	assert.ok(requestParams.messages[0].content.includes('- general'));
+});
+
+test('a deps judgmentModel override wins and lands in AuditRunCall.model', async () => {
+	const fake = makeFakeAnthropic(wellFormedInput());
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+
+	await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), [], {
+		prisma: testPrisma,
+		anthropic: fake.client,
+		judgmentModel: 'claude-opus-5',
+	});
+
+	const requestParams = fake.lastParams() as { model: string };
+	assert.equal(requestParams.model, 'claude-opus-5');
+	const callRows = await testPrisma.auditRunCall.findMany({ where: { auditRunId: auditRun.id } });
+	assert.equal(callRows[0].model, 'claude-opus-5', 'spend must be billed under the model used');
+});
+
+test('without an override the persisted AuditSettings.judgmentModel decides the model', async () => {
+	await testPrisma.auditSettings.create({
+		data: { maxSonnetCallsPerRun: 10, judgmentModel: 'claude-fable-5' },
+	});
+	const fake = makeFakeAnthropic(wellFormedInput());
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+
+	await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), [], {
+		prisma: testPrisma,
+		anthropic: fake.client,
+	});
+
+	const requestParams = fake.lastParams() as { model: string };
+	assert.equal(requestParams.model, 'claude-fable-5');
+});
+
+test('stop_reason refusal is an errored outcome with its own explanation, spend logged', async () => {
+	const refusingAnthropic = {
+		messages: {
+			async create() {
+				return {
+					content: [],
+					stop_reason: 'refusal',
+					usage: FAKE_USAGE,
+				} as unknown as Anthropic.Message;
+			},
+		},
+	};
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+
+	const outcome = await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), [], {
+		prisma: testPrisma,
+		anthropic: refusingAnthropic,
+	});
+
+	assert.equal(outcome.outcome, 'errored');
+	if (outcome.outcome === 'errored') {
+		assert.equal(outcome.usageLogged, true, 'a refusal still bills the tokens it consumed');
+	}
+	const callRows = await testPrisma.auditRunCall.findMany({ where: { auditRunId: auditRun.id } });
+	assert.equal(callRows.length, 1);
+	assert.match(
+		callRows[0].errorText ?? '',
+		/refusal/,
+		'the error must say refusal, not a misleading "no tool_use block"',
+	);
+	assert.ok(callRows[0].rawResponse);
 });
 
 test('a simulated network failure logs zero spend and does not throw', async () => {
