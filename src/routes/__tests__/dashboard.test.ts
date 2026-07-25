@@ -52,18 +52,19 @@ beforeEach(async () => {
 	await testPrisma.auditSettings.deleteMany();
 });
 
-test('GET /api/dashboard carries stats and settings alongside the legacy keys', async () => {
+test('GET /api/dashboard serves stats and settings, with the legacy keys gone', async () => {
 	const res = await fetch(`${baseUrl}/api/dashboard`);
 	assert.equal(res.status, 200);
 	const body = (await res.json()) as {
-		overview: { totalSpendUsd: number };
+		overview?: unknown;
 		proposals: unknown[];
-		notesByKind: Record<string, unknown[]>;
+		notesByKind?: unknown;
 		stats: {
 			totalSpendUsd: number;
 			sessionsAudited: number;
 			openProposalCount: number;
 			noteCount: number;
+			droppedProposalTotal: number;
 		};
 		settings: {
 			judgmentModel: string;
@@ -71,9 +72,14 @@ test('GET /api/dashboard carries stats and settings alongside the legacy keys', 
 			models: Array<{ id: string; pricing: { input: number; output: number } | null }>;
 		};
 	};
-	assert.ok(body.overview, 'legacy overview key must survive until the UI rebuild lands');
-	assert.ok(body.notesByKind);
+	assert.equal(body.overview, undefined, 'legacy overview key died with the Unit 3 UI rebuild');
+	assert.equal(
+		body.notesByKind,
+		undefined,
+		'legacy notesByKind key died with the Unit 3 UI rebuild',
+	);
 	assert.equal(body.stats.sessionsAudited, 0);
+	assert.equal(body.stats.droppedProposalTotal, 0);
 	assert.equal(body.settings.judgmentModel, 'claude-sonnet-5');
 	assert.equal(body.settings.maxSonnetCallsPerRun, 10);
 	assert.equal(body.settings.models.length, 3);
