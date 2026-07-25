@@ -10,6 +10,7 @@ export * from './types.js';
 export {
 	findLatestSessionFile,
 	listSessionFiles,
+	peekSessionCwd,
 	resolveProjectsRoot,
 	resolveSessionFilePath,
 	slugFromCwd,

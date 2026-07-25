@@ -21,6 +21,7 @@ import type { LintFinding } from '../lint/index.js';
 import {
 	listSessionFiles,
 	parseSessionFile,
+	peekSessionCwd,
 	resolveProjectsRoot,
 	resolveSessionFilePath,
 } from '../parser/index.js';
@@ -140,8 +141,12 @@ export function createSessionsRouter(deps: SessionsRouterDeps = {}): Router {
 			}
 			throw error;
 		}
-		const projects: Array<{ slug: string; sessionCount: number; latestSessionMtime: string }> =
-			[];
+		const projects: Array<{
+			slug: string;
+			sessionCount: number;
+			latestSessionMtime: string;
+			cwd: string | null;
+		}> = [];
 		for (const entry of entries) {
 			if (!entry.isDirectory()) {
 				continue;
@@ -153,10 +158,18 @@ export function createSessionsRouter(deps: SessionsRouterDeps = {}): Router {
 			const mtimes = await Promise.all(
 				sessionFiles.map(async (file) => (await fs.stat(file)).mtimeMs),
 			);
+			const latestMtime = Math.max(...mtimes);
+			// The slug is a lossy encoding of the real path (a literal hyphen in a folder name is
+			// indistinguishable from a path-separator hyphen once slugified) — the transcript itself
+			// is the only place the real, unambiguous path survives, so the UI can show a friendly
+			// project name instead of the raw slug.
+			const latestFile = sessionFiles[mtimes.indexOf(latestMtime)]!;
+			const cwd = await peekSessionCwd(latestFile);
 			projects.push({
 				slug: entry.name,
 				sessionCount: sessionFiles.length,
-				latestSessionMtime: new Date(Math.max(...mtimes)).toISOString(),
+				latestSessionMtime: new Date(latestMtime).toISOString(),
+				cwd,
 			});
 		}
 		projects.sort((a, b) => b.latestSessionMtime.localeCompare(a.latestSessionMtime));

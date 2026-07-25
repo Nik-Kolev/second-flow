@@ -1,10 +1,5 @@
 import prismaClient from '../lib/prisma.js';
-import type {
-	AnalysisNote,
-	AnalysisNoteKind,
-	RuleProposal,
-	RuleProposalStatus,
-} from '../generated/prisma/index.js';
+import type { RuleProposal, RuleProposalStatus } from '../generated/prisma/index.js';
 
 export interface FindingsDeps {
 	prisma?: typeof prismaClient;
@@ -16,12 +11,6 @@ export const PROPOSAL_STATUS_RANK: Record<RuleProposalStatus, number> = {
 	recurring: 2,
 	resolved: 3,
 	dismissed: 4,
-};
-
-export const NOTE_KIND_RANK: Record<AnalysisNoteKind, number> = {
-	compliance: 0,
-	environmentalInstruction: 1,
-	promptCoaching: 2,
 };
 
 export interface ProposalGroup {
@@ -88,25 +77,4 @@ export async function getRankedProposalGroups(deps: FindingsDeps = {}): Promise<
 	});
 
 	return result;
-}
-
-// Grouped by kind only, never merged — AnalysisNote has no identity field like targetRuleRef, and
-// collapsing on the coarse 3-way kind would wrongly merge unrelated evidence into one misleading
-// "occurrence count." Volume control for notes comes entirely from the display-side cap, not from
-// server-side collapsing.
-export async function getRankedNotesByKind(
-	deps: FindingsDeps = {},
-): Promise<Record<AnalysisNoteKind, AnalysisNote[]>> {
-	const prisma = deps.prisma ?? prismaClient;
-	const notes = await prisma.analysisNote.findMany({ orderBy: { createdAt: 'desc' } });
-
-	const byKind: Record<AnalysisNoteKind, AnalysisNote[]> = {
-		compliance: [],
-		environmentalInstruction: [],
-		promptCoaching: [],
-	};
-	for (const note of notes) {
-		byKind[note.kind].push(note);
-	}
-	return byKind;
 }
