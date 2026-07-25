@@ -48,16 +48,22 @@ model AuditRun {
 }
 
 model AuditRunCall {
-  id                  String   @id @default(cuid())
-  auditRunId          String
-  auditRun            AuditRun @relation(fields: [auditRunId], references: [id], onDelete: Cascade)
+  id                  String    @id @default(cuid())
+  // Null for calls made outside any run — activation classification happens on first sight of a
+  // rulebook, not inside an audit, but its spend still belongs on the meter.
+  auditRunId          String?
+  auditRun            AuditRun? @relation(fields: [auditRunId], references: [id], onDelete: Cascade)
   model               String
   purpose             String
   inputTokens         Int
   outputTokens        Int
   cacheReadTokens     Int
   cacheCreationTokens Int
-  createdAt           DateTime @default(now())
+  // Set only when a response came back but its content failed to parse — the raw material to
+  // reconstruct what a discarded call actually said, instead of losing it forever.
+  rawResponse         String?
+  errorText           String?
+  createdAt           DateTime  @default(now())
 
   @@index([auditRunId])
 }
@@ -65,6 +71,7 @@ model AuditRunCall {
 enum AuditedSessionStatus {
   completed
   skippedCeiling
+  errored
 }
 
 // Created only for a session that passes Pass 1's gate (src/analysis/gate.ts) — a session waved
@@ -79,6 +86,12 @@ model AuditedSession {
   // Sum of input+output+cacheRead+cacheCreation tokens across every assistant turn in the audited
   // transcript, set at creation time (pipeline.ts). Null on rows created before step 8 shipped.
   transcriptTokenTotal  Int?
+  // What the judgment call actually produced: rows persisted, plus proposals Sonnet returned that
+  // the valid-source filter dropped (judgment.ts) — the difference between "Sonnet found nothing"
+  // and "Sonnet found things we threw away." Null on rows from before the observability pass.
+  proposalsCreated      Int?
+  notesCreated          Int?
+  droppedProposalCount  Int?
   createdAt             DateTime             @default(now())
   ruleProposals         RuleProposal[]
   analysisNotes         AnalysisNote[]

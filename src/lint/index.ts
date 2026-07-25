@@ -5,5 +5,5 @@ export { checkFormatBeforeCommit } from './format-before-commit.js';
 export { checkShellCommandLabel } from './shell-command-label.js';
 export { CHECKERS } from './checkers.js';
 export type { CheckerDefinition } from './checkers.js';
-export { getActivationMap, runActivatedCheckers } from './activation.js';
+export { ACTIVATION_PURPOSE, getActivationMap, runActivatedCheckers } from './activation.js';
 export type { ActivationDeps } from './activation.js';

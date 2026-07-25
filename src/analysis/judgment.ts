@@ -45,7 +45,9 @@ export interface JudgmentFindings {
 }
 
 export type JudgmentCallOutcome =
-	| { outcome: 'completed'; findings: JudgmentFindings }
+	// droppedProposalCount: proposals Sonnet returned that the valid-source filter removed — the
+	// difference between "Sonnet found nothing" and "Sonnet found things we threw away".
+	| { outcome: 'completed'; findings: JudgmentFindings; droppedProposalCount: number }
 	| { outcome: 'errored'; usageLogged: boolean };
 
 const MAX_FIELD_LENGTH = 300;
@@ -295,8 +297,8 @@ async function logAuditRunCall(
 	auditRunId: string,
 	usage: Anthropic.Usage,
 	prisma: typeof prismaClient,
-): Promise<void> {
-	await prisma.auditRunCall.create({
+): Promise<string> {
+	const call = await prisma.auditRunCall.create({
 		data: {
 			auditRunId,
 			model: SONNET_MODEL,
@@ -307,6 +309,7 @@ async function logAuditRunCall(
 			cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
 		},
 	});
+	return call.id;
 }
 
 export async function runJudgmentCall(
@@ -329,16 +332,30 @@ export async function runJudgmentCall(
 
 	// The call succeeded and real tokens were spent, regardless of whether the response content
 	// below parses cleanly — log the spend before attempting to interpret the findings.
-	await logAuditRunCall(auditRunId, response.usage, prisma);
+	const callId = await logAuditRunCall(auditRunId, response.usage, prisma);
 
 	try {
 		const findings = extractJudgmentFindings(response);
 		const validSources = validFileSources(rulebook);
+		const returnedProposalCount = findings.ruleRewriteProposals.length;
 		findings.ruleRewriteProposals = findings.ruleRewriteProposals.filter((proposal) =>
 			validSources.has(proposal.targetRuleRef),
 		);
-		return { outcome: 'completed', findings };
-	} catch {
+		return {
+			outcome: 'completed',
+			findings,
+			droppedProposalCount: returnedProposalCount - findings.ruleRewriteProposals.length,
+		};
+	} catch (error) {
+		// The findings are discarded, but the raw response must survive on the call row — without
+		// it, an errored run is unreconstructable and indistinguishable from "found nothing".
+		await prisma.auditRunCall.update({
+			where: { id: callId },
+			data: {
+				rawResponse: JSON.stringify(response),
+				errorText: error instanceof Error ? error.message : String(error),
+			},
+		});
 		return { outcome: 'errored', usageLogged: true };
 	}
 }
