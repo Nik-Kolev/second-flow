@@ -311,6 +311,7 @@ function renderStats(stats) {
 		<div class="stat-tile">
 			<p class="label">Second Flow's own spend</p>
 			<p class="value">${formatUsd(stats.totalSpendUsd)}</p>
+			<p class="hint">Includes small Haiku calls that run on their own — e.g. re-classifying your rulebook after you edit it — not just the audits you run</p>
 		</div>
 		<div class="stat-tile">
 			<p class="label">Sessions audited</p>

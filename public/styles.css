@@ -205,6 +205,12 @@ code,
 	margin: 0;
 }
 
+.stat-tile .hint {
+	color: var(--ink-muted);
+	font-size: 0.75rem;
+	margin: 6px 0 0;
+}
+
 /* ---- Tabs (JS-driven — panels are fetched/re-rendered, not static) ---- */
 
 .tabs {
