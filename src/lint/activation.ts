@@ -9,6 +9,7 @@ import type { LintFinding } from './types.js';
 
 const HAIKU_MODEL = 'claude-haiku-4-5';
 const ACTIVATION_TOOL_NAME = 'report_activation';
+export const ACTIVATION_PURPOSE = 'activation';
 
 interface ActivationAnthropicClient {
 	messages: {
@@ -80,6 +81,7 @@ function parseActivationInput(input: unknown): Record<string, boolean> {
 async function classifyRulebook(
 	rulebook: RulebookResolution,
 	anthropic: ActivationAnthropicClient,
+	prisma: typeof prismaClient,
 ): Promise<Record<string, boolean>> {
 	const properties: Record<string, { type: 'boolean' }> = {};
 	for (const checker of CHECKERS) {
@@ -105,6 +107,21 @@ async function classifyRulebook(
 		],
 		tool_choice: { type: 'tool', name: ACTIVATION_TOOL_NAME },
 		messages: [{ role: 'user', content: buildPrompt(rulebook) }],
+	});
+
+	// Real tokens were spent regardless of whether the content below parses — log the spend before
+	// interpreting the response, same ordering as judgment.ts/ledger.ts. auditRunId is null because
+	// activation happens on first sight of a rulebook, outside any audit run.
+	await prisma.auditRunCall.create({
+		data: {
+			auditRunId: null,
+			model: HAIKU_MODEL,
+			purpose: ACTIVATION_PURPOSE,
+			inputTokens: response.usage.input_tokens,
+			outputTokens: response.usage.output_tokens,
+			cacheReadTokens: response.usage.cache_read_input_tokens ?? 0,
+			cacheCreationTokens: response.usage.cache_creation_input_tokens ?? 0,
+		},
 	});
 
 	const toolUseBlock = response.content.find(
@@ -150,7 +167,7 @@ async function resolveActivationMap(
 		return activationMap;
 	}
 
-	const activationMap = await classifyRulebook(rulebook, anthropic);
+	const activationMap = await classifyRulebook(rulebook, anthropic, prisma);
 
 	await Promise.all(
 		CHECKERS.map((checker) =>

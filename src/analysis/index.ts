@@ -1,4 +1,9 @@
-export { createAuditRun, reconcileProposals, RECONCILIATION_PURPOSE } from './ledger.js';
+export {
+	createAuditRun,
+	reconcileProposals,
+	runStartupReconciliation,
+	RECONCILIATION_PURPOSE,
+} from './ledger.js';
 export type { LedgerDeps, ReconciliationSummary } from './ledger.js';
 export { buildTimelineIndex, resolveById, resolveTurnIndex } from './timeline-index.js';
 export type { TimelineIndex } from './timeline-index.js';

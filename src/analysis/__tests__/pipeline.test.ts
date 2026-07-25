@@ -285,16 +285,147 @@ test("the happy path creates a completed AuditedSession plus correctly FK'd find
 	}
 	assert.equal(outcome.proposalsCreated, 1);
 	assert.equal(outcome.notesCreated, 0);
+	assert.equal(outcome.droppedProposalCount, 0);
 
 	const sessions = await testPrisma.auditedSession.findMany();
 	assert.equal(sessions.length, 1);
 	assert.equal(sessions[0].status, AuditedSessionStatus.completed);
+	assert.equal(sessions[0].proposalsCreated, 1);
+	assert.equal(sessions[0].notesCreated, 0);
+	assert.equal(sessions[0].droppedProposalCount, 0);
 
 	const proposals = await testPrisma.ruleProposal.findMany({
 		where: { auditedSessionId: outcome.auditedSessionId },
 	});
 	assert.equal(proposals.length, 1);
 	assert.equal(proposals[0].targetRuleRef, 'CLAUDE.md');
+});
+
+test('an errored Sonnet call flips the AuditedSession to errored, finding counts stay null', async () => {
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+	const timeline = [makeToolCall('call-a')];
+	const lintFindings: LintFinding[] = [
+		{
+			checkerId: 'commit-gating',
+			toolUseId: 'call-a',
+			timestamp: 't',
+			evidence: 'no approval',
+		},
+	];
+	const input = {
+		session: makeSession(timeline),
+		stats: emptyStats(),
+		lintFindings,
+		rulebook: makeRulebook(),
+	};
+	const malformedAnthropic = {
+		messages: {
+			async create() {
+				return {
+					content: [
+						{
+							type: 'tool_use',
+							id: 'tu_1',
+							name: 'report_judgment_findings',
+							input: {},
+						},
+					],
+					usage: FAKE_USAGE,
+				} as unknown as Anthropic.Message;
+			},
+		},
+	};
+
+	const outcome = await runJudgmentPipelineForSession(input, auditRun.id, async () => true, {
+		prisma: testPrisma,
+		anthropic: malformedAnthropic,
+	});
+
+	assert.equal(outcome.outcome, 'errored');
+	const sessions = await testPrisma.auditedSession.findMany();
+	assert.equal(sessions.length, 1);
+	assert.equal(
+		sessions[0].status,
+		AuditedSessionStatus.errored,
+		'an errored Pass 2 must be visible on the row, not indistinguishable from completed',
+	);
+	assert.equal(sessions[0].proposalsCreated, null, 'no findings were persisted, so no counts');
+	assert.equal(sessions[0].notesCreated, null);
+});
+
+test('proposals dropped by the valid-source filter are counted on the AuditedSession row', async () => {
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+	const timeline = [makeToolCall('call-a')];
+	const lintFindings: LintFinding[] = [
+		{
+			checkerId: 'commit-gating',
+			toolUseId: 'call-a',
+			timestamp: 't',
+			evidence: 'no approval',
+		},
+	];
+	const input = {
+		session: makeSession(timeline),
+		stats: emptyStats(),
+		lintFindings,
+		rulebook: makeRulebook(),
+	};
+	const hallucinatingAnthropic = {
+		messages: {
+			async create() {
+				return {
+					content: [
+						{
+							type: 'tool_use',
+							id: 'tu_1',
+							name: 'report_judgment_findings',
+							input: {
+								ruleRewriteProposals: [
+									{
+										targetRuleRef: 'CLAUDE.md',
+										targetTextSnapshot: 'Always label shell commands.',
+										proposedText: 'Always label shell commands with RUNNING:.',
+										evidence: 'turn 1',
+									},
+									{
+										targetRuleRef: 'hallucinated-file.md',
+										targetTextSnapshot: 'Invented wording.',
+										proposedText: 'Invented rewrite.',
+										evidence: 'turn 2',
+									},
+								],
+								complianceNotes: [],
+								environmentalInstructionIgnoredNotes: [],
+								promptCoachingNotes: [],
+							},
+						},
+					],
+					usage: FAKE_USAGE,
+				} as unknown as Anthropic.Message;
+			},
+		},
+	};
+
+	const outcome = await runJudgmentPipelineForSession(input, auditRun.id, async () => true, {
+		prisma: testPrisma,
+		anthropic: hallucinatingAnthropic,
+	});
+
+	assert.equal(outcome.outcome, 'completed');
+	if (outcome.outcome !== 'completed') {
+		return;
+	}
+	assert.equal(outcome.proposalsCreated, 1);
+	assert.equal(outcome.droppedProposalCount, 1);
+
+	const sessions = await testPrisma.auditedSession.findMany();
+	assert.equal(sessions.length, 1);
+	assert.equal(sessions[0].proposalsCreated, 1);
+	assert.equal(
+		sessions[0].droppedProposalCount,
+		1,
+		'"Sonnet found something we threw away" must be distinguishable from "found nothing"',
+	);
 });
 
 test('the AuditedSession row records transcriptTokenTotal summed across every assistant turn', async () => {

@@ -218,6 +218,30 @@ export async function createAuditRun(deps: LedgerDeps = {}): Promise<AuditRun> {
 	return prisma.auditRun.create({ data: {} });
 }
 
+// Server-startup entrypoint: null means the free fast path (zero outstanding proposals — one
+// COUNT query, no AuditRun created, no LLM calls possible). Only a non-empty ledger creates a run,
+// and even then ledger.ts only spends Haiku tokens on proposals whose flagged wording moved.
+export async function runStartupReconciliation(
+	deps: LedgerDeps = {},
+): Promise<ReconciliationSummary | null> {
+	const prisma = deps.prisma ?? prismaClient;
+	const outstanding = await prisma.ruleProposal.count({
+		where: { status: RuleProposalStatus.proposed },
+	});
+	if (outstanding === 0) {
+		return null;
+	}
+	const auditRun = await createAuditRun(deps);
+	try {
+		return await reconcileProposals(auditRun.id, deps);
+	} finally {
+		await prisma.auditRun.update({
+			where: { id: auditRun.id },
+			data: { completedAt: new Date() },
+		});
+	}
+}
+
 export async function reconcileProposals(
 	auditRunId: string,
 	deps: LedgerDeps = {},

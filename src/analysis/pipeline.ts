@@ -51,6 +51,7 @@ export type JudgmentPipelineOutcome =
 			auditedSessionId: string;
 			proposalsCreated: number;
 			notesCreated: number;
+			droppedProposalCount: number;
 	  }
 	| { outcome: 'errored'; auditedSessionId: string; usageLogged: boolean };
 
@@ -98,9 +99,9 @@ export async function executeJudgmentForSession(
 		return { outcome: 'skippedCeiling', auditedSessionId: auditedSession.id };
 	}
 
-	// Status is decided by the ceiling check alone, before Sonnet is ever called — a Sonnet call
-	// that later errors still leaves the row `completed` (Pass 2 was genuinely attempted); the
-	// schema has no separate "errored" status, only the return outcome reflects that distinction.
+	// Created optimistically as `completed`, then corrected to `errored` below if the Sonnet call
+	// fails — creating the row first means even a crash mid-call leaves a visible record that Pass 2
+	// was attempted for this session.
 	const auditedSession = await prisma.auditedSession.create({
 		data: {
 			transcriptSessionId: input.session.sessionId,
@@ -122,6 +123,10 @@ export async function executeJudgmentForSession(
 		deps,
 	);
 	if (callOutcome.outcome === 'errored') {
+		await prisma.auditedSession.update({
+			where: { id: auditedSession.id },
+			data: { status: AuditedSessionStatus.errored },
+		});
 		return {
 			outcome: 'errored',
 			auditedSessionId: auditedSession.id,
@@ -134,11 +139,20 @@ export async function executeJudgmentForSession(
 		callOutcome.findings,
 		prisma,
 	);
+	await prisma.auditedSession.update({
+		where: { id: auditedSession.id },
+		data: {
+			proposalsCreated,
+			notesCreated,
+			droppedProposalCount: callOutcome.droppedProposalCount,
+		},
+	});
 	return {
 		outcome: 'completed',
 		auditedSessionId: auditedSession.id,
 		proposalsCreated,
 		notesCreated,
+		droppedProposalCount: callOutcome.droppedProposalCount,
 	};
 }
 
