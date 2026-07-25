@@ -100,7 +100,12 @@ async function loadSessionArtifacts(
 	}
 	const session = await parseSessionFile(filePath, { projectSlug: slug });
 	const stats = computeSessionStats(session);
-	const rulebook = await resolveRulebook(session.attachments, session.meta, deps.rulebookOpts);
+	const rulebook = await resolveRulebook(
+		session.attachments,
+		session.meta,
+		session.timeline,
+		deps.rulebookOpts,
+	);
 	const lintFindings = await runActivatedCheckers(session.timeline, rulebook, deps);
 	return {
 		filePath,

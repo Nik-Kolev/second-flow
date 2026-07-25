@@ -21,7 +21,7 @@ async function main(): Promise<void> {
 
 	const session = await parseSession(slug, sessionId);
 	const stats = computeSessionStats(session);
-	const rulebook = await resolveRulebook(session.attachments, session.meta);
+	const rulebook = await resolveRulebook(session.attachments, session.meta, session.timeline);
 	const lintFindings = await runActivatedCheckers(session.timeline, rulebook);
 
 	const auditRun = await createAuditRun();
