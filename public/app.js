@@ -92,6 +92,7 @@ const state = {
 	projects: [],
 	currentSlug: null,
 	sessions: [],
+	currentFindings: null,
 };
 
 function escapeHtml(value) {
@@ -795,6 +796,9 @@ function sessionProposalCardHtml(proposal) {
 				${badgeHtml(meta)}
 				<span class="finding-ref">${escapeHtml(proposal.targetRuleRef)}</span>
 			</div>
+			<p class="finding-field-label">Current wording</p>
+			<p class="finding-text">${escapeHtml(proposal.targetTextSnapshot)}</p>
+			<p class="finding-field-label">Proposed wording</p>
 			<p class="finding-text">${escapeHtml(proposal.proposedText)}</p>
 			<div class="finding-evidence">${formatEvidence(proposal.evidence)}</div>
 		</article>
@@ -843,6 +847,7 @@ function noteCardHtml(note, meta) {
 }
 
 function renderFindings(data) {
+	state.currentFindings = data;
 	const panel = document.getElementById('panel-findings');
 	const session = data.auditedSession;
 	const meta = SESSION_STATUS_META[session.status] ?? {
@@ -866,6 +871,9 @@ function renderFindings(data) {
 			<p class="summary-meta">${escapeHtml(projectLabel)}</p>
 			<p class="summary-meta mono">${escapeHtml(projectSubpath)}</p>
 			<p class="summary-meta">Audited ${escapeHtml(formatDateTime(session.auditedAt))}${escapeHtml(counts)}</p>
+			<div class="summary-actions">
+				<button type="button" class="button-secondary" id="export-findings-button">Export as Markdown</button>
+			</div>
 		</div>`;
 
 	const sections = [];
@@ -899,6 +907,158 @@ function renderFindings(data) {
 	}
 
 	panel.innerHTML = summaryHtml + bodyHtml;
+	document
+		.getElementById('export-findings-button')
+		.addEventListener('click', exportFindingsAsMarkdown);
+}
+
+// Mirrors renderFindings' structure and ordering exactly (session summary, then
+// proposals-first-then-fixed-note-kind-order sections, then the same three empty-state
+// sentences) but emits plain Markdown instead of HTML. Kept independent rather than sharing
+// helpers with renderFindings, since the two are fundamentally different output shapes — if
+// renderFindings' section logic changes, make the same change here.
+function buildFindingsMarkdown(data) {
+	const session = data.auditedSession;
+	const statusLabel = (SESSION_STATUS_META[session.status] ?? { label: session.status }).label;
+	const counts =
+		session.status === 'completed'
+			? ` — ${session.proposalsCreated ?? '?'} proposals · ${session.notesCreated ?? '?'} notes · ${session.droppedProposalCount ?? 0} dropped as invalid`
+			: '';
+	const project = state.projects.find((entry) => entry.slug === session.projectSlug);
+	const projectLabel = project ? projectName(project) : session.projectSlug;
+	const projectSubpath = project ? projectPath(project) : session.projectSlug;
+
+	const lines = [
+		'# Second Flow findings',
+		'',
+		`**Session:** ${session.transcriptSessionId}`,
+		`**Status:** ${statusLabel}`,
+		`**Project:** ${projectLabel} (${projectSubpath})`,
+		`**Audited:** ${formatDateTime(session.auditedAt)}${counts}`,
+		'',
+	];
+
+	const sections = [];
+	if (data.proposals.length > 0) {
+		sections.push(['Rule-rewrite proposals', data.proposals.map(proposalMarkdown)]);
+	}
+	for (const kind of ['compliance', 'environmentalInstruction', 'promptCoaching']) {
+		const notes = data.notesByKind[kind] ?? [];
+		if (notes.length === 0) {
+			continue;
+		}
+		sections.push([NOTE_KIND_META[kind].label, notes.map(noteMarkdown)]);
+	}
+
+	if (sections.length === 0) {
+		if (session.status === 'wavedThrough') {
+			lines.push('Clean — the free checks found nothing worth a judgment call.');
+		} else if (session.status === 'errored') {
+			lines.push(
+				'The judgment call errored — no findings were stored. The raw response is preserved on the AuditRunCall row.',
+			);
+		} else {
+			lines.push('The judgment call returned no findings.');
+		}
+		return lines.join('\n');
+	}
+
+	for (const [heading, cards] of sections) {
+		lines.push(`## ${heading}`, '', cards.join('\n'));
+	}
+	return lines.join('\n');
+}
+
+// A fence sized to one backtick longer than any run already in the text — rule wording can
+// itself contain fenced code examples, and a fixed ``` fence would close early on those.
+function fenceFor(text) {
+	const runs = text.match(/`+/g) ?? [];
+	const longestRun = runs.reduce((max, run) => Math.max(max, run.length), 0);
+	return '`'.repeat(Math.max(3, longestRun + 1));
+}
+
+function proposalMarkdown(proposal) {
+	const statusLabel = PROPOSAL_STATUS_META[proposal.status].label;
+	const currentFence = fenceFor(proposal.targetTextSnapshot);
+	const proposedFence = fenceFor(proposal.proposedText);
+	return [
+		`### ${proposal.targetRuleRef}`,
+		'',
+		`**Status:** ${statusLabel}`,
+		'',
+		'**Current wording:**',
+		'',
+		`${currentFence}text`,
+		proposal.targetTextSnapshot,
+		currentFence,
+		'',
+		'**Proposed wording:**',
+		'',
+		`${proposedFence}text`,
+		proposal.proposedText,
+		proposedFence,
+		'',
+		'**Evidence:**',
+		'',
+		proposal.evidence,
+		'',
+	].join('\n');
+}
+
+// Mirrors the label text recurrenceBadgeHtml (above) renders onto a badge — plain text here
+// since a Markdown file has no badge, just the same three possible sentences.
+function recurrenceLabelText(marker) {
+	if (marker.kind === 'recurred') {
+		const plural = marker.laterAuditCount === 1 ? '' : 's';
+		return `Recurred in ${marker.recurredInCount} of ${marker.laterAuditCount} later audit${plural}`;
+	}
+	if (marker.laterAuditCount === 0) {
+		return 'No later audits yet';
+	}
+	const plural = marker.laterAuditCount === 1 ? '' : 's';
+	return `Not seen in ${marker.laterAuditCount} later audit${plural}`;
+}
+
+function noteMarkdown(note) {
+	const ref = note.ruleRef != null ? note.ruleRef : 'legacy — no rule link';
+	const lines = [`### ${ref}`, ''];
+	if (note.recurrence) {
+		lines.push(`**Recurrence:** ${recurrenceLabelText(note.recurrence)}`, '');
+	}
+	lines.push(note.evidence, '');
+	return lines.join('\n');
+}
+
+function filenameSafe(value) {
+	return String(value).replace(/[^A-Za-z0-9._-]+/g, '-');
+}
+
+function findingsMarkdownFilename(session) {
+	return `${filenameSafe(session.projectSlug)}_${filenameSafe(session.transcriptSessionId)}-findings.md`;
+}
+
+function downloadTextFile(filename, mimeType, content) {
+	const blob = new Blob([content], { type: mimeType });
+	const url = URL.createObjectURL(blob);
+	const anchor = document.createElement('a');
+	anchor.href = url;
+	anchor.download = filename;
+	document.body.appendChild(anchor);
+	anchor.click();
+	anchor.remove();
+	URL.revokeObjectURL(url);
+}
+
+function exportFindingsAsMarkdown() {
+	const data = state.currentFindings;
+	if (!data) {
+		return;
+	}
+	downloadTextFile(
+		findingsMarkdownFilename(data.auditedSession),
+		'text/markdown',
+		buildFindingsMarkdown(data),
+	);
 }
 
 /* ---- Rule proposals tab (global) ---- */
