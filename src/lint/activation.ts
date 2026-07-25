@@ -28,13 +28,22 @@ export interface ActivationDeps {
 	anthropic?: ActivationAnthropicClient;
 }
 
+// Memory/stack blocks are scoped per-session (different sessions Read different files), so their
+// text must never enter this hash or the prompt below — folding session-specific content in would
+// mean almost no two sessions ever share a cache key, defeating the entire point of the
+// CheckerActivation cache (one cached Haiku call per distinct *always-active* rulebook). Both
+// functions apply the identical filter so the hashed set and the actual prompt content never drift.
+function activationScopedBlocks(rulebook: RulebookResolution): RulebookResolution['blocks'] {
+	return rulebook.blocks.filter((block) => block.origin !== 'memory');
+}
+
 // Block order from resolveRulebook (src/rulebook/index.ts) is fixed (global, then
 // project, then hook, then environmental), so the same rulebook always hashes the
 // same way. JSON-encoding the block texts (rather than joining them on a fixed
 // separator) means two different block sets can never hash identically just
 // because one block's text happens to contain the separator.
 function hashRulebook(rulebook: RulebookResolution): string {
-	const blockTexts = rulebook.blocks.map((block) => block.text);
+	const blockTexts = activationScopedBlocks(rulebook).map((block) => block.text);
 	const encoded = JSON.stringify(blockTexts);
 	return createHash('sha256').update(encoded).digest('hex');
 }
@@ -43,7 +52,9 @@ function buildPrompt(rulebook: RulebookResolution): string {
 	const ruleShapes = CHECKERS.map(
 		(checker) => `- ${checker.id}: ${checker.ruleShapeDescription}`,
 	).join('\n');
-	const rulebookText = rulebook.blocks.map((block) => block.text).join('\n\n---\n\n');
+	const rulebookText = activationScopedBlocks(rulebook)
+		.map((block) => block.text)
+		.join('\n\n---\n\n');
 	return [
 		"Below is a user's Claude Code rulebook (CLAUDE.md and related instruction text).",
 		'For each rule-shape listed below, decide whether the rulebook text actually contains a rule of',

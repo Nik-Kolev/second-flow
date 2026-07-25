@@ -93,15 +93,22 @@ function serializeEvidenceWindow(evidenceWindow: TimelineEvent[]): string {
 	return evidenceWindow.map(serializeEvent).join('\n');
 }
 
+function describeBlockTargetability(block: RulebookResolution['blocks'][number]): string {
+	if (block.origin === 'file') {
+		return `rewrite target: ${block.source}`;
+	}
+	if (block.origin === 'memory') {
+		return 'not a rewrite target — edit the memory/stack file directly';
+	}
+	return 'not user-editable — never a rewrite target';
+}
+
 function describeRulebook(rulebook: RulebookResolution): string {
 	return rulebook.blocks
-		.map((block) => {
-			const targetability =
-				block.origin === 'file'
-					? `rewrite target: ${block.source}`
-					: 'not user-editable — never a rewrite target';
-			return `[${block.layer}/${block.origin}, ${targetability}]\n${block.text}`;
-		})
+		.map(
+			(block) =>
+				`[${block.layer}/${block.origin}, ${describeBlockTargetability(block)}]\n${block.text}`,
+		)
 		.join('\n\n---\n\n');
 }
 
@@ -122,9 +129,7 @@ function buildJudgmentPrompt(
 				]
 			: [];
 
-	const fileSources = rulebook.blocks
-		.filter((block) => block.origin === 'file')
-		.map((block) => block.source);
+	const fileSources = [...validRuleRefSources(rulebook)];
 
 	return [
 		"Below is a user's Claude Code rulebook, followed by an evidence window from one of their",
@@ -134,7 +139,8 @@ function buildJudgmentPrompt(
 		'',
 		'- ruleRewriteProposals: a rule is too vague/weakly worded and the session shows it failing',
 		'  to prevent a gap. targetRuleRef MUST be one of the blocks below marked "rewrite target"',
-		'  — never a hook or environmental block, since those are not user-editable files.',
+		'  — never a hook or environmental block (not user-editable files) and never a memory/stack',
+		'  block either (edited directly by the user, not through a rewrite proposal).',
 		'- complianceNotes: a rule is clear but was ignored or half-followed. No rewrite is implied —',
 		'  the wording is fine, the behavior was not. This also covers scope-limiting (work far',
 		'  outside the stated task).',
@@ -340,10 +346,21 @@ function extractJudgmentFindings(response: Anthropic.Message): JudgmentFindings 
 // The forced tool-use schema has no way to constrain targetRuleRef to an enum of valid sources,
 // so Sonnet's own string output is the only guard — a hallucinated or reworded path must not
 // reach RuleProposal, since it would later fail ledger.ts's reconciliation lookup indistinguishably
-// from a legitimately-moved file.
-function validFileSources(rulebook: RulebookResolution): Set<string> {
+// from a legitimately-moved file. CLAUDE.md files only — memory/stack files are never rewrite
+// targets, since their edit lifecycle already goes through the user's own memory-promotion process.
+function rewriteTargetSources(rulebook: RulebookResolution): Set<string> {
 	return new Set(
 		rulebook.blocks.filter((block) => block.origin === 'file').map((block) => block.source),
+	);
+}
+
+// Wider than rewriteTargetSources: a note (unlike a proposal) is allowed to cite a memory/stack
+// file by path — it's just never allowed to propose rewriting one.
+function validRuleRefSources(rulebook: RulebookResolution): Set<string> {
+	return new Set(
+		rulebook.blocks
+			.filter((block) => block.origin === 'file' || block.origin === 'memory')
+			.map((block) => block.source),
 	);
 }
 
@@ -412,10 +429,11 @@ export async function runJudgmentCall(
 
 	try {
 		const findings = extractJudgmentFindings(response);
-		const validSources = validFileSources(rulebook);
+		const rewriteSources = rewriteTargetSources(rulebook);
+		const ruleRefSources = validRuleRefSources(rulebook);
 		const returnedProposalCount = findings.ruleRewriteProposals.length;
 		findings.ruleRewriteProposals = findings.ruleRewriteProposals.filter((proposal) =>
-			validSources.has(proposal.targetRuleRef),
+			rewriteSources.has(proposal.targetRuleRef),
 		);
 		// Notes degrade instead of dropping: an invented ruleRef would recreate for notes the exact
 		// silent-filter bug the proposal counter above exists to expose — coerce to "general" so the
@@ -426,7 +444,7 @@ export async function runJudgmentCall(
 			findings.promptCoachingNotes,
 		]) {
 			for (const note of noteArray) {
-				if (note.ruleRef !== GENERAL_RULE_REF && !validSources.has(note.ruleRef)) {
+				if (note.ruleRef !== GENERAL_RULE_REF && !ruleRefSources.has(note.ruleRef)) {
 					note.ruleRef = GENERAL_RULE_REF;
 				}
 			}

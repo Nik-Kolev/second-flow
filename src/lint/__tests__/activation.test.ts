@@ -32,14 +32,27 @@ after(async () => {
 	await rm(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
 });
 
-function makeRulebook(text: string): RulebookResolution {
+function makeRulebook(text: string, memoryText?: string): RulebookResolution {
+	const blocks: RulebookResolution['blocks'] = [
+		{ origin: 'file', layer: 'user', source: 'CLAUDE.md', text },
+	];
+	if (memoryText !== undefined) {
+		blocks.push({
+			origin: 'memory',
+			layer: 'memory',
+			sourceKind: 'global-memory',
+			source: '/home/.claude/memory/gotcha.md',
+			text: memoryText,
+		});
+	}
 	return {
-		blocks: [{ origin: 'file', layer: 'user', source: 'CLAUDE.md', text }],
+		blocks,
 		sources: {
 			global: { path: 'CLAUDE.md', found: true },
 			project: { path: null, found: false },
 			hook: { count: 0 },
 			environmental: { count: 0 },
+			memory: { count: memoryText !== undefined ? 1 : 0 },
 		},
 	};
 }
@@ -276,5 +289,63 @@ test('two concurrent calls for the same uncached rulebook only call Haiku once',
 		await testPrisma.auditRunCall.count(),
 		1,
 		'one shared call means one billed row — dedup must prevent double-logging too',
+	);
+});
+
+test('memory-block text is excluded from the cache hash — same CLAUDE.md, different memory, still hits', async () => {
+	const fake = makeFakeAnthropic({
+		'commit-gating': true,
+		'format-before-commit': false,
+		'shell-command-label': true,
+		'boundary-compact': false,
+	});
+
+	const first = await getActivationMap(
+		makeRulebook('Rulebook G: shared CLAUDE.md.', 'gotcha one'),
+		{
+			prisma: testPrisma,
+			anthropic: fake.client,
+		},
+	);
+	const firstRequestParams = fake.lastParams() as { messages: Array<{ content: string }> };
+	assert.ok(
+		!firstRequestParams.messages[0].content.includes('gotcha one'),
+		'buildPrompt must exclude memory-block text from the actual Haiku request, not just from the hash',
+	);
+
+	const second = await getActivationMap(
+		makeRulebook('Rulebook G: shared CLAUDE.md.', 'a completely different gotcha'),
+		{ prisma: testPrisma, anthropic: fake.client },
+	);
+
+	assert.deepEqual(first, second);
+	assert.equal(
+		fake.calls(),
+		1,
+		'different memory content behind the same CLAUDE.md must not defeat the activation cache',
+	);
+});
+
+test('CLAUDE.md content still drives the cache hash even with identical memory blocks', async () => {
+	const fake = makeFakeAnthropic({
+		'commit-gating': true,
+		'format-before-commit': false,
+		'shell-command-label': true,
+		'boundary-compact': false,
+	});
+
+	await getActivationMap(makeRulebook('Rulebook H: version one.', 'same gotcha'), {
+		prisma: testPrisma,
+		anthropic: fake.client,
+	});
+	await getActivationMap(makeRulebook('Rulebook H: version two.', 'same gotcha'), {
+		prisma: testPrisma,
+		anthropic: fake.client,
+	});
+
+	assert.equal(
+		fake.calls(),
+		2,
+		'a genuine CLAUDE.md change must still be a cache miss regardless of memory content',
 	);
 });
