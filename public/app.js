@@ -17,7 +17,11 @@ const ICONS = {
 	arrowUp: '<line x1="12" y1="19" x2="12" y2="5"/><path d="M6 11l6-6 6 6"/>',
 	chevronLeft: '<path d="M15 6l-6 6 6 6"/>',
 	clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>',
+	close: '<line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/>',
 };
+
+const TOAST_DURATION_MS = 6000;
+const TOAST_MAX = 3;
 
 const PROPOSAL_STATUS_META = {
 	proposed: { color: 'var(--status-warning)', icon: ICONS.triangleAlert, label: 'Proposed' },
@@ -207,6 +211,10 @@ function formatDateTime(iso) {
 		hour: '2-digit',
 		minute: '2-digit',
 	}).format(new Date(iso));
+}
+
+function formatTime(date) {
+	return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' }).format(date);
 }
 
 function formatBytes(bytes) {
@@ -629,6 +637,51 @@ function modelSelectHtml(models, currentModel) {
 		</div>`;
 }
 
+/* ---- Toasts ---- */
+
+function toastBodyHtml({ icon, message }) {
+	return `
+		<button type="button" class="toast-body">
+			${iconSvg(icon, 'var(--status-good)')}
+			<p class="toast-text">${message}</p>
+		</button>
+		<button type="button" class="toast-dismiss" aria-label="Dismiss notification">${iconSvg(ICONS.close, 'currentColor')}</button>`;
+}
+
+// Newest toast is always appended last, so with plain column flow (no column-reverse) it lands at
+// the fixed bottom anchor while older toasts get pushed upward — the stacking order falls out of
+// normal DOM order for free, no extra positioning logic needed.
+function showToast({ icon, message, auditedSessionId }) {
+	const container = document.getElementById('toast-container');
+	while (container.children.length >= TOAST_MAX) {
+		container.firstElementChild.remove();
+	}
+	const toast = document.createElement('div');
+	toast.className = 'toast';
+	toast.innerHTML = toastBodyHtml({ icon, message });
+	container.appendChild(toast);
+
+	let dismissed = false;
+	const dismiss = () => {
+		if (dismissed) {
+			return;
+		}
+		dismissed = true;
+		clearTimeout(timer);
+		toast.classList.remove('visible');
+		toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+	};
+	const timer = setTimeout(dismiss, TOAST_DURATION_MS);
+	toast.querySelector('.toast-dismiss').addEventListener('click', dismiss);
+	if (auditedSessionId) {
+		toast.querySelector('.toast-body').addEventListener('click', () => {
+			dismiss();
+			viewFindings(auditedSessionId);
+		});
+	}
+	requestAnimationFrame(() => toast.classList.add('visible'));
+}
+
 async function startAuditFlow(sessionId, force) {
 	showDialog(`
 		<p class="dialog-title">Checking session…</p>
@@ -716,8 +769,13 @@ async function startAuditFlow(sessionId, force) {
 
 async function runAudit(sessionId, force) {
 	showDialog(`
-		<p class="dialog-title">Running audit…</p>
-		<p class="dialog-text">One judgment call — a large evidence window can take a minute.</p>`);
+		<div class="dialog-spinner-row">
+			<div class="spinner"></div>
+			<div>
+				<p class="dialog-title">Running audit…</p>
+				<p class="dialog-text">One judgment call — a large evidence window can take a minute.</p>
+			</div>
+		</div>`);
 	let outcome;
 	try {
 		outcome = await api(
@@ -763,9 +821,17 @@ async function runAudit(sessionId, force) {
 	}
 
 	closeDialog();
-	if (outcome.auditedSessionId) {
-		await viewFindings(outcome.auditedSessionId);
-	}
+	const time = escapeHtml(formatTime(new Date()));
+	const sessionLabel = escapeHtml(sessionId);
+	const message =
+		outcome.outcome === 'wavedThrough'
+			? `Session <span class="mono">${sessionLabel}</span> recorded as clean — nothing found. Done at ${time}.`
+			: `Session <span class="mono">${sessionLabel}</span> audited with <span class="mono">${escapeHtml(state.settings.judgmentModel)}</span> — done at ${time}.`;
+	showToast({
+		icon: outcome.outcome === 'wavedThrough' ? ICONS.shieldCheck : ICONS.checkCircle,
+		message,
+		auditedSessionId: outcome.auditedSessionId,
+	});
 }
 
 /* ---- Findings tab ---- */
@@ -820,21 +886,21 @@ function recurrenceBadgeHtml(marker) {
 		return badgeHtml({
 			color: 'var(--status-serious)',
 			icon: ICONS.repeat,
-			label: `Recurred in ${marker.recurredInCount} of ${marker.laterAuditCount} later audit${plural}`,
+			label: `Recurred in ${marker.recurredInCount} of ${marker.laterAuditCount} later audit${plural} of a different session`,
 		});
 	}
 	if (marker.laterAuditCount === 0) {
 		return badgeHtml({
 			color: 'var(--ink-muted)',
 			icon: ICONS.clock,
-			label: 'No later audits yet',
+			label: 'No later audit of a different session yet',
 		});
 	}
 	const plural = marker.laterAuditCount === 1 ? '' : 's';
 	return badgeHtml({
 		color: 'var(--status-good)',
 		icon: ICONS.checkCircle,
-		label: `Not seen in ${marker.laterAuditCount} later audit${plural}`,
+		label: `Not seen in ${marker.laterAuditCount} later audit${plural} of a different session`,
 	});
 }
 
@@ -910,6 +976,10 @@ function renderFindings(data) {
 	const project = state.projects.find((entry) => entry.slug === session.projectSlug);
 	const projectLabel = project ? projectName(project) : session.projectSlug;
 	const projectSubpath = project ? projectPath(project) : session.projectSlug;
+	const currentModel = (data.history ?? []).find((entry) => entry.isCurrent)?.model ?? null;
+	const modelLine = currentModel
+		? `<p class="summary-meta">Judged by <span class="mono">${escapeHtml(currentModel)}</span></p>`
+		: '';
 	const summaryHtml = `
 		<div class="session-summary">
 			<div class="summary-head">
@@ -919,7 +989,9 @@ function renderFindings(data) {
 			<p class="summary-meta">${escapeHtml(projectLabel)}</p>
 			<p class="summary-meta mono">${escapeHtml(projectSubpath)}</p>
 			<p class="summary-meta">Audited ${escapeHtml(formatDateTime(session.auditedAt))}${escapeHtml(counts)}</p>
+			${modelLine}
 			<div class="summary-actions">
+				<button type="button" class="button-secondary" id="reaudit-findings-button">Re-run audit</button>
 				<button type="button" class="button-secondary" id="export-findings-button">Export as Markdown</button>
 			</div>
 		</div>`;
@@ -960,6 +1032,10 @@ function renderFindings(data) {
 	document
 		.getElementById('export-findings-button')
 		.addEventListener('click', exportFindingsAsMarkdown);
+	document.getElementById('reaudit-findings-button').addEventListener('click', () => {
+		state.currentSlug = session.projectSlug;
+		startAuditFlow(session.transcriptSessionId, true);
+	});
 	for (const el of panel.querySelectorAll('[data-history-audit]')) {
 		el.addEventListener('click', () => viewFindings(el.dataset.historyAudit));
 	}
@@ -1064,13 +1140,13 @@ function proposalMarkdown(proposal) {
 function recurrenceLabelText(marker) {
 	if (marker.kind === 'recurred') {
 		const plural = marker.laterAuditCount === 1 ? '' : 's';
-		return `Recurred in ${marker.recurredInCount} of ${marker.laterAuditCount} later audit${plural}`;
+		return `Recurred in ${marker.recurredInCount} of ${marker.laterAuditCount} later audit${plural} of a different session`;
 	}
 	if (marker.laterAuditCount === 0) {
-		return 'No later audits yet';
+		return 'No later audit of a different session yet';
 	}
 	const plural = marker.laterAuditCount === 1 ? '' : 's';
-	return `Not seen in ${marker.laterAuditCount} later audit${plural}`;
+	return `Not seen in ${marker.laterAuditCount} later audit${plural} of a different session`;
 }
 
 function noteMarkdown(note) {
