@@ -235,7 +235,12 @@ export function buildJudgmentRequestParams(
 ): JudgmentRequestParams {
 	return {
 		model,
-		max_tokens: 4096,
+		// A model with substantial real evidence to report can exhaust the budget on the
+		// earlier required schema fields (ruleRewriteProposals, complianceNotes) before ever
+		// reaching the later ones (environmentalInstructionIgnoredNotes, promptCoachingNotes),
+		// producing a syntactically valid but incomplete response that fails required-field
+		// validation. Confirmed against claude-opus-5 on a real, evidence-dense session at 4096.
+		max_tokens: 8192,
 		tools: [buildJudgmentTool()],
 		tool_choice: { type: 'tool', name: JUDGMENT_TOOL_NAME },
 		messages: [
