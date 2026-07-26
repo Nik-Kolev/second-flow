@@ -491,6 +491,15 @@ function sessionBadgesHtml(session) {
 			}),
 		);
 	}
+	if (session.audit.auditCount > 1) {
+		badges.push(
+			badgeHtml({
+				color: 'var(--ink-muted)',
+				icon: ICONS.repeat,
+				label: `×${session.audit.auditCount} audits`,
+			}),
+		);
+	}
 	return badges.join('');
 }
 
@@ -846,6 +855,45 @@ function noteCardHtml(note, meta) {
 	`;
 }
 
+function auditHistoryCardHtml(entry) {
+	const meta = SESSION_STATUS_META[entry.status] ?? {
+		color: 'var(--ink-muted)',
+		icon: ICONS.minusCircle,
+		label: entry.status,
+	};
+	const modelHtml = entry.model
+		? `<span class="row-meta mono">${escapeHtml(entry.model)}</span>`
+		: '';
+	const countsHtml =
+		entry.status === 'completed'
+			? `<span class="row-meta">${entry.proposalsCreated ?? '?'} proposals · ${entry.notesCreated ?? '?'} notes</span>`
+			: '';
+	const inner = `${badgeHtml(meta)}<span class="row-meta">${escapeHtml(formatDateTime(entry.auditedAt))}</span>${modelHtml}${countsHtml}`;
+	if (entry.isCurrent) {
+		return `
+			<li class="row-card history-current">
+				<span class="row-main">${inner}<span class="row-meta current-tag">Currently viewing</span></span>
+			</li>`;
+	}
+	return `
+		<li class="row-card">
+			<button type="button" class="row-main" data-history-audit="${escapeHtml(entry.auditedSessionId)}">${inner}</button>
+		</li>`;
+}
+
+// A single-audit session has nothing to navigate between, so the list only earns its place once
+// there's an actual choice to make.
+function auditHistoryListHtml(history) {
+	if (history.length <= 1) {
+		return '';
+	}
+	return `
+		<div class="audit-history">
+			<p class="list-heading">Audit history (${history.length})</p>
+			<ul class="row-list">${history.map(auditHistoryCardHtml).join('')}</ul>
+		</div>`;
+}
+
 function renderFindings(data) {
 	state.currentFindings = data;
 	const panel = document.getElementById('panel-findings');
@@ -906,17 +954,23 @@ function renderFindings(data) {
 		bodyHtml = '<p class="empty-state">The judgment call returned no findings.</p>';
 	}
 
-	panel.innerHTML = summaryHtml + bodyHtml;
+	const historyHtml = auditHistoryListHtml(data.history ?? []);
+
+	panel.innerHTML = summaryHtml + historyHtml + bodyHtml;
 	document
 		.getElementById('export-findings-button')
 		.addEventListener('click', exportFindingsAsMarkdown);
+	for (const el of panel.querySelectorAll('[data-history-audit]')) {
+		el.addEventListener('click', () => viewFindings(el.dataset.historyAudit));
+	}
 }
 
-// Mirrors renderFindings' structure and ordering exactly (session summary, then
+// Mirrors renderFindings' structure and ordering (session summary, then
 // proposals-first-then-fixed-note-kind-order sections, then the same three empty-state
-// sentences) but emits plain Markdown instead of HTML. Kept independent rather than sharing
-// helpers with renderFindings, since the two are fundamentally different output shapes — if
-// renderFindings' section logic changes, make the same change here.
+// sentences) but emits plain Markdown instead of HTML, and omits the audit-history list —
+// sibling audit IDs have no meaningful Markdown analogue outside the running app. Kept
+// independent rather than sharing helpers with renderFindings, since the two are fundamentally
+// different output shapes — if renderFindings' section logic changes, make the same change here.
 function buildFindingsMarkdown(data) {
 	const session = data.auditedSession;
 	const statusLabel = (SESSION_STATUS_META[session.status] ?? { label: session.status }).label;

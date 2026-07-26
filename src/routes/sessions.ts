@@ -7,6 +7,7 @@ import {
 	checkGateAndBuildEvidence,
 	createAuditRun,
 	executeJudgmentForSession,
+	JUDGMENT_PURPOSE,
 	resolveJudgmentModel,
 	sumTranscriptTokens,
 } from '../analysis/index.js';
@@ -412,6 +413,43 @@ export function createSessionsRouter(deps: SessionsRouterDeps = {}): Router {
 		}
 		const recurrence = await getNoteRecurrenceForSession(auditedSessionId, deps);
 
+		const historyRows = await prisma.auditedSession.findMany({
+			where: {
+				projectSlug: auditedSession.projectSlug,
+				transcriptSessionId: auditedSession.transcriptSessionId,
+			},
+			orderBy: { createdAt: 'desc' },
+			select: {
+				id: true,
+				auditRunId: true,
+				status: true,
+				createdAt: true,
+				proposalsCreated: true,
+				notesCreated: true,
+				droppedProposalCount: true,
+			},
+		});
+		const judgmentCalls = await prisma.auditRunCall.findMany({
+			where: {
+				auditRunId: { in: historyRows.map((row) => row.auditRunId) },
+				purpose: JUDGMENT_PURPOSE,
+			},
+			select: { auditRunId: true, model: true },
+		});
+		const modelByAuditRunId = new Map(
+			judgmentCalls.map((call) => [call.auditRunId, call.model]),
+		);
+		const history = historyRows.map((row) => ({
+			auditedSessionId: row.id,
+			status: row.status,
+			model: modelByAuditRunId.get(row.auditRunId) ?? null,
+			auditedAt: row.createdAt.toISOString(),
+			proposalsCreated: row.proposalsCreated,
+			notesCreated: row.notesCreated,
+			droppedProposalCount: row.droppedProposalCount,
+			isCurrent: row.id === auditedSession.id,
+		}));
+
 		const notesByKind: Record<
 			AnalysisNoteKind,
 			Array<AnalysisNote & { recurrence: unknown }>
@@ -441,6 +479,7 @@ export function createSessionsRouter(deps: SessionsRouterDeps = {}): Router {
 			},
 			proposals: auditedSession.ruleProposals,
 			notesByKind,
+			history,
 		});
 	});
 
