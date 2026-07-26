@@ -27,6 +27,14 @@ enum AnalysisNoteKind {
   compliance
 }
 
+// Only meaningful for compliance/environmentalInstruction notes — the judgment model classifies
+// these itself at generation time (judgment.ts), rather than the app inferring it from evidence
+// text after the fact.
+enum NoteOutcome {
+  violation
+  positive
+}
+
 model AnalysisNote {
   id               String           @id @default(cuid())
   auditedSessionId String
@@ -37,6 +45,11 @@ model AnalysisNote {
   // field existed — displayed as "legacy, no rule link", never matched for recurrence.
   ruleRef          String?
   evidence         String
+  // Null only on rows created before this field existed — displayed as "not classified", never
+  // guessed at from evidence text.
+  outcome          NoteOutcome?
+  // Only populated for promptCoaching notes — the model's suggested rephrasing, when it gives one.
+  suggestion       String?
   createdAt        DateTime         @default(now())
 
   @@index([auditedSessionId])

@@ -12,7 +12,11 @@ import {
 	sumTranscriptTokens,
 } from '../analysis/index.js';
 import type { JudgmentRequestParams } from '../analysis/index.js';
-import { getNoteRecurrenceForSession, PRICING_PER_MTOK } from '../dashboard/index.js';
+import {
+	computeCallCostUsd,
+	getNoteRecurrenceForSession,
+	PRICING_PER_MTOK,
+} from '../dashboard/index.js';
 import { AuditedSessionStatus } from '../generated/prisma/index.js';
 import type { AnalysisNote, AnalysisNoteKind } from '../generated/prisma/index.js';
 import anthropicClient from '../lib/anthropic.js';
@@ -434,15 +438,28 @@ export function createSessionsRouter(deps: SessionsRouterDeps = {}): Router {
 				auditRunId: { in: historyRows.map((row) => row.auditRunId) },
 				purpose: JUDGMENT_PURPOSE,
 			},
-			select: { auditRunId: true, model: true },
+			select: {
+				auditRunId: true,
+				model: true,
+				inputTokens: true,
+				outputTokens: true,
+				cacheReadTokens: true,
+				cacheCreationTokens: true,
+			},
 		});
 		const modelByAuditRunId = new Map(
 			judgmentCalls.map((call) => [call.auditRunId, call.model]),
+		);
+		// A re-audit's judgment call is the one that determines its findings, so its cost is what's
+		// meaningful here — not the activation/reconciliation spend, which isn't tied to a single run.
+		const costByAuditRunId = new Map(
+			judgmentCalls.map((call) => [call.auditRunId, computeCallCostUsd(call)]),
 		);
 		const history = historyRows.map((row) => ({
 			auditedSessionId: row.id,
 			status: row.status,
 			model: modelByAuditRunId.get(row.auditRunId) ?? null,
+			costUsd: costByAuditRunId.get(row.auditRunId) ?? null,
 			auditedAt: row.createdAt.toISOString(),
 			proposalsCreated: row.proposalsCreated,
 			notesCreated: row.notesCreated,

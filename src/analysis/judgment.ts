@@ -1,7 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import anthropicClient from '../lib/anthropic.js';
 import prismaClient from '../lib/prisma.js';
-import { AnalysisNoteKind } from '../generated/prisma/index.js';
+import { AnalysisNoteKind, NoteOutcome } from '../generated/prisma/index.js';
 import type { AssistantContentBlock, TimelineEvent } from '../parser/index.js';
 import type { RulebookResolution } from '../rulebook/index.js';
 import { getAuditSettings } from './settings.js';
@@ -39,16 +39,26 @@ interface RuleRewriteProposalInput {
 	evidence: string;
 }
 
-interface NoteInput {
+// The judgment model classifies outcome itself at generation time — never inferred from
+// evidence text after the fact. A single incident that's compliant one moment and missed the
+// next must come back as two separate notes (one of each outcome), not one note conflating both.
+interface ComplianceOrEnvNoteInput {
 	evidence: string;
 	ruleRef: string;
+	outcome: NoteOutcome;
+}
+
+interface PromptCoachingNoteInput {
+	evidence: string;
+	ruleRef: string;
+	suggestion: string;
 }
 
 export interface JudgmentFindings {
 	ruleRewriteProposals: RuleRewriteProposalInput[];
-	complianceNotes: NoteInput[];
-	environmentalInstructionIgnoredNotes: NoteInput[];
-	promptCoachingNotes: NoteInput[];
+	complianceNotes: ComplianceOrEnvNoteInput[];
+	environmentalInstructionIgnoredNotes: ComplianceOrEnvNoteInput[];
+	promptCoachingNotes: PromptCoachingNoteInput[];
 }
 
 export type JudgmentCallOutcome =
@@ -141,13 +151,19 @@ function buildJudgmentPrompt(
 		'  to prevent a gap. targetRuleRef MUST be one of the blocks below marked "rewrite target"',
 		'  — never a hook or environmental block (not user-editable files) and never a memory/stack',
 		'  block either (edited directly by the user, not through a rewrite proposal).',
-		'- complianceNotes: a rule is clear but was ignored or half-followed. No rewrite is implied —',
-		'  the wording is fine, the behavior was not. This also covers scope-limiting (work far',
-		'  outside the stated task).',
-		'- environmentalInstructionIgnoredNotes: a stated MCP/output-style/skill instruction was',
-		'  ignored. No rewrite is possible, only the evidence.',
+		'- complianceNotes: an instance of a clear rule being followed or not — no rewrite implied,',
+		'  the wording is fine either way. Set outcome to "violation" when the rule was ignored or',
+		'  half-followed (this also covers scope-limiting: work far outside the stated task), or',
+		'  "positive" when it was followed correctly and is worth confirming. If a single incident',
+		'  contains both a compliant moment and a missed one (e.g. correct the first time, not',
+		'  re-confirmed the second), report it as two separate notes — one "violation", one',
+		'  "positive" — never one note conflating both.',
+		'- environmentalInstructionIgnoredNotes: the same outcome field and violation/positive split',
+		'  as complianceNotes, but for a stated MCP/output-style/skill instruction rather than a',
+		'  CLAUDE.md rule. No rewrite is possible, only the evidence.',
 		'- promptCoachingNotes: an under-specified user prompt had a concrete cost (extra turns,',
-		'  clarifying questions). Secondary — never the headline finding.',
+		'  clarifying questions). Secondary — never the headline finding. suggestion must be a',
+		'  concrete rephrasing the user could have used instead, not just a restatement of the cost.',
 		'',
 		'Every note carries a ruleRef: the rulebook file the note is about, or exactly',
 		`"${GENERAL_RULE_REF}" when it ties to no single file. Valid ruleRef values:`,
@@ -164,15 +180,29 @@ function buildJudgmentPrompt(
 }
 
 function buildJudgmentTool(): Anthropic.ToolUnion {
-	const noteArraySchema = {
+	const complianceOrEnvNoteArraySchema = {
 		type: 'array' as const,
 		items: {
 			type: 'object' as const,
 			properties: {
 				evidence: { type: 'string' as const },
 				ruleRef: { type: 'string' as const },
+				outcome: { type: 'string' as const, enum: Object.values(NoteOutcome) },
 			},
-			required: ['evidence', 'ruleRef'],
+			required: ['evidence', 'ruleRef', 'outcome'],
+			additionalProperties: false,
+		},
+	};
+	const promptCoachingNoteArraySchema = {
+		type: 'array' as const,
+		items: {
+			type: 'object' as const,
+			properties: {
+				evidence: { type: 'string' as const },
+				ruleRef: { type: 'string' as const },
+				suggestion: { type: 'string' as const },
+			},
+			required: ['evidence', 'ruleRef', 'suggestion'],
 			additionalProperties: false,
 		},
 	};
@@ -201,9 +231,9 @@ function buildJudgmentTool(): Anthropic.ToolUnion {
 						additionalProperties: false,
 					},
 				},
-				complianceNotes: noteArraySchema,
-				environmentalInstructionIgnoredNotes: noteArraySchema,
-				promptCoachingNotes: noteArraySchema,
+				complianceNotes: complianceOrEnvNoteArraySchema,
+				environmentalInstructionIgnoredNotes: complianceOrEnvNoteArraySchema,
+				promptCoachingNotes: promptCoachingNoteArraySchema,
 			},
 			required: [
 				'ruleRewriteProposals',
@@ -273,7 +303,12 @@ async function callJudgmentModel(
 	);
 }
 
-function validateNoteArray(value: unknown, fieldName: string): NoteInput[] {
+const NOTE_OUTCOMES = new Set<string>(Object.values(NoteOutcome));
+
+function validateComplianceOrEnvNoteArray(
+	value: unknown,
+	fieldName: string,
+): ComplianceOrEnvNoteInput[] {
 	if (!Array.isArray(value)) {
 		throw new Error(`Judgment classification's "${fieldName}" is not an array`);
 	}
@@ -282,14 +317,41 @@ function validateNoteArray(value: unknown, fieldName: string): NoteInput[] {
 			typeof item !== 'object' ||
 			item === null ||
 			typeof (item as { evidence?: unknown }).evidence !== 'string' ||
-			typeof (item as { ruleRef?: unknown }).ruleRef !== 'string'
+			typeof (item as { ruleRef?: unknown }).ruleRef !== 'string' ||
+			!NOTE_OUTCOMES.has((item as { outcome?: unknown }).outcome as string)
 		) {
 			throw new Error(
-				`Judgment classification's "${fieldName}" has an entry missing a string evidence or ruleRef field`,
+				`Judgment classification's "${fieldName}" has an entry missing a string evidence/ruleRef field or a valid outcome ("violation"/"positive")`,
 			);
 		}
-		const record = item as { evidence: string; ruleRef: string };
-		return { evidence: record.evidence, ruleRef: record.ruleRef };
+		const record = item as { evidence: string; ruleRef: string; outcome: NoteOutcome };
+		return { evidence: record.evidence, ruleRef: record.ruleRef, outcome: record.outcome };
+	});
+}
+
+function validatePromptCoachingNoteArray(value: unknown): PromptCoachingNoteInput[] {
+	if (!Array.isArray(value)) {
+		throw new Error('Judgment classification\'s "promptCoachingNotes" is not an array');
+	}
+	return value.map((item) => {
+		if (
+			typeof item !== 'object' ||
+			item === null ||
+			typeof (item as { evidence?: unknown }).evidence !== 'string' ||
+			typeof (item as { ruleRef?: unknown }).ruleRef !== 'string' ||
+			typeof (item as { suggestion?: unknown }).suggestion !== 'string' ||
+			(item as { suggestion: string }).suggestion.length === 0
+		) {
+			throw new Error(
+				'Judgment classification\'s "promptCoachingNotes" has an entry missing a string evidence/ruleRef field or a non-empty suggestion',
+			);
+		}
+		const record = item as { evidence: string; ruleRef: string; suggestion: string };
+		return {
+			evidence: record.evidence,
+			ruleRef: record.ruleRef,
+			suggestion: record.suggestion,
+		};
 	});
 }
 
@@ -339,12 +401,15 @@ function extractJudgmentFindings(response: Anthropic.Message): JudgmentFindings 
 	const record = input as Record<string, unknown>;
 	return {
 		ruleRewriteProposals: validateProposalArray(record.ruleRewriteProposals),
-		complianceNotes: validateNoteArray(record.complianceNotes, 'complianceNotes'),
-		environmentalInstructionIgnoredNotes: validateNoteArray(
+		complianceNotes: validateComplianceOrEnvNoteArray(
+			record.complianceNotes,
+			'complianceNotes',
+		),
+		environmentalInstructionIgnoredNotes: validateComplianceOrEnvNoteArray(
 			record.environmentalInstructionIgnoredNotes,
 			'environmentalInstructionIgnoredNotes',
 		),
-		promptCoachingNotes: validateNoteArray(record.promptCoachingNotes, 'promptCoachingNotes'),
+		promptCoachingNotes: validatePromptCoachingNoteArray(record.promptCoachingNotes),
 	};
 }
 
@@ -491,19 +556,36 @@ export async function persistJudgmentFindings(
 		});
 	}
 
-	const noteGroups: Array<[AnalysisNoteKind, NoteInput[]]> = [
+	const complianceOrEnvGroups: Array<[AnalysisNoteKind, ComplianceOrEnvNoteInput[]]> = [
 		[AnalysisNoteKind.compliance, findings.complianceNotes],
 		[AnalysisNoteKind.environmentalInstruction, findings.environmentalInstructionIgnoredNotes],
-		[AnalysisNoteKind.promptCoaching, findings.promptCoachingNotes],
 	];
 	let notesCreated = 0;
-	for (const [kind, notes] of noteGroups) {
+	for (const [kind, notes] of complianceOrEnvGroups) {
 		for (const note of notes) {
 			await prisma.analysisNote.create({
-				data: { auditedSessionId, kind, evidence: note.evidence, ruleRef: note.ruleRef },
+				data: {
+					auditedSessionId,
+					kind,
+					evidence: note.evidence,
+					ruleRef: note.ruleRef,
+					outcome: note.outcome,
+				},
 			});
 			notesCreated++;
 		}
+	}
+	for (const note of findings.promptCoachingNotes) {
+		await prisma.analysisNote.create({
+			data: {
+				auditedSessionId,
+				kind: AnalysisNoteKind.promptCoaching,
+				evidence: note.evidence,
+				ruleRef: note.ruleRef,
+				suggestion: note.suggestion,
+			},
+		});
+		notesCreated++;
 	}
 
 	return { proposalsCreated: findings.ruleRewriteProposals.length, notesCreated };
