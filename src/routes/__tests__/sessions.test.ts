@@ -449,3 +449,56 @@ test('GET /api/sessions/:auditedSessionId is 404 for an unknown id', async () =>
 	const res = await fetch(`${baseUrl}/api/sessions/nonexistent-id`);
 	assert.equal(res.status, 404);
 });
+
+test('GET /api/sessions/:auditedSessionId includes every audit of the same transcript as history, newest first', async () => {
+	const first = await fetch(`${baseUrl}/api/projects/${SLUG}/sessions/${DIRTY_SESSION}/audit`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({}),
+	});
+	const { auditedSessionId: firstId } = (await first.json()) as { auditedSessionId: string };
+
+	const second = await fetch(`${baseUrl}/api/projects/${SLUG}/sessions/${DIRTY_SESSION}/audit`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ force: true }),
+	});
+	const { auditedSessionId: secondId } = (await second.json()) as { auditedSessionId: string };
+
+	const res = await fetch(`${baseUrl}/api/sessions/${firstId}`);
+	const body = (await res.json()) as {
+		history: Array<{
+			auditedSessionId: string;
+			status: string;
+			model: string | null;
+			isCurrent: boolean;
+		}>;
+	};
+	assert.equal(body.history.length, 2);
+	assert.equal(body.history[0].auditedSessionId, secondId, 'newest audit first');
+	assert.equal(body.history[1].auditedSessionId, firstId);
+	for (const entry of body.history) {
+		assert.equal(entry.status, 'completed');
+		assert.equal(entry.model, 'claude-sonnet-5');
+	}
+	assert.equal(body.history[0].isCurrent, false, 'isCurrent tracks the URL param, not recency');
+	assert.equal(body.history[1].isCurrent, true);
+});
+
+test('GET /api/sessions/:auditedSessionId reports a single-entry history with a null model for a wavedThrough audit', async () => {
+	const audit = await fetch(`${baseUrl}/api/projects/${SLUG}/sessions/${CLEAN_SESSION}/audit`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({}),
+	});
+	const { auditedSessionId } = (await audit.json()) as { auditedSessionId: string };
+
+	const res = await fetch(`${baseUrl}/api/sessions/${auditedSessionId}`);
+	const body = (await res.json()) as {
+		history: Array<{ auditedSessionId: string; model: string | null; isCurrent: boolean }>;
+	};
+	assert.equal(body.history.length, 1);
+	assert.equal(body.history[0].auditedSessionId, auditedSessionId);
+	assert.equal(body.history[0].model, null);
+	assert.equal(body.history[0].isCurrent, true);
+});
