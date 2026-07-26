@@ -18,6 +18,8 @@ const ICONS = {
 	chevronLeft: '<path d="M15 6l-6 6 6 6"/>',
 	clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>',
 	close: '<line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/>',
+	wrench: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.1 2.1-2.8-.7-.7-2.8 2.1-2.1z"/>',
+	eye: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
 };
 
 const TOAST_DURATION_MS = 6000;
@@ -35,14 +37,11 @@ const PROPOSAL_STATUS_META = {
 	dismissed: { color: 'var(--ink-muted)', icon: ICONS.minusCircle, label: 'Dismissed' },
 };
 
-const NOTE_KIND_META = {
-	compliance: { color: 'var(--status-serious)', icon: ICONS.shieldAlert, label: 'Compliance' },
-	environmentalInstruction: {
-		color: 'var(--status-warning)',
-		icon: ICONS.gear,
-		label: 'Environmental instruction',
-	},
-	promptCoaching: { color: 'var(--ink-muted)', icon: ICONS.chatBubble, label: 'Prompt coaching' },
+// Category identity (which rulebook layer a note is about) — deliberately not colored by
+// severity, so it never competes with the outcome-level good/warning/critical signal.
+const CATEGORY_META = {
+	compliance: { color: 'var(--category-compliance)', label: 'Compliance' },
+	environmentalInstruction: { color: 'var(--category-environmental)', label: 'Environmental' },
 };
 
 const SESSION_STATUS_META = {
@@ -96,6 +95,9 @@ const state = {
 	projects: [],
 	currentSlug: null,
 	sessions: [],
+	// Number of extra "Load N more" pages revealed beyond the default view — reset whenever a
+	// project's session list is freshly fetched.
+	sessionsVisibleExtra: 0,
 	currentFindings: null,
 };
 
@@ -179,6 +181,20 @@ function extractLede(text) {
 	}
 	const quote = match[1];
 	return quote.length > 70 ? `${quote.slice(0, 70)}…` : quote;
+}
+
+// A one-line summary for compact cards — falls back to a capped first sentence when there's no
+// quoted span, or when the quote is too short to stand alone (e.g. a section name like "Session
+// end" rather than an actual description) to be a useful one-line summary on its own.
+const MIN_USEFUL_LEDE_LENGTH = 20;
+
+function shortSummary(text) {
+	const lede = extractLede(text);
+	if (lede && lede.length >= MIN_USEFUL_LEDE_LENGTH) {
+		return lede;
+	}
+	const firstSentence = splitIntoSentences(text)[0] ?? text;
+	return firstSentence.length > 100 ? `${firstSentence.slice(0, 100)}…` : firstSentence;
 }
 
 // Judgment calls cost fractions of a cent to a few dollars — two decimals would round a $0.0092
@@ -278,6 +294,11 @@ function iconSvg(pathData, color) {
 
 function badgeHtml(meta) {
 	return `<span class="badge" style="color:${meta.color}">${iconSvg(meta.icon, meta.color)}${escapeHtml(meta.label)}</span>`;
+}
+
+function categoryTagHtml(kind) {
+	const meta = CATEGORY_META[kind];
+	return `<span class="category-tag" style="color:${meta.color}">${escapeHtml(meta.label)}</span>`;
 }
 
 async function api(path, options) {
@@ -468,6 +489,7 @@ async function loadSessions() {
 	try {
 		const data = await api(`/api/projects/${encodeURIComponent(state.currentSlug)}/sessions`);
 		state.sessions = data.sessions;
+		state.sessionsVisibleExtra = 0;
 		renderSessions();
 	} catch (error) {
 		view.innerHTML = `<p class="error-state">${escapeHtml(error.message)}</p>`;
@@ -529,11 +551,44 @@ function sessionRowHtml(session) {
 		</li>`;
 }
 
+const SESSIONS_RECENT_DAYS = 7;
+const SESSIONS_PAGE_SIZE = 10;
+
+// Sessions arrive newest-first (by fileMtime) — count how many fall within the recent window
+// before hitting the first older one, since everything after that point is older still.
+function countRecentSessions(sessions) {
+	const cutoffMs = Date.now() - SESSIONS_RECENT_DAYS * 24 * 60 * 60 * 1000;
+	let count = 0;
+	for (const session of sessions) {
+		if (new Date(session.fileMtime).getTime() < cutoffMs) {
+			break;
+		}
+		count++;
+	}
+	return count;
+}
+
 function renderSessions() {
 	const view = document.getElementById('sessions-view');
 	const project = state.projects.find((entry) => entry.slug === state.currentSlug);
 	const name = project ? projectName(project) : state.currentSlug;
 	const path = project ? projectPath(project) : state.currentSlug;
+
+	// The last 7 days are always fully visible (never hidden behind a click), with a floor of
+	// SESSIONS_PAGE_SIZE so a quiet project still shows a reasonable amount up front. Anything
+	// beyond that loads 10 at a time.
+	const baseVisible = Math.max(countRecentSessions(state.sessions), SESSIONS_PAGE_SIZE);
+	const visibleCount = Math.min(
+		state.sessions.length,
+		baseVisible + state.sessionsVisibleExtra * SESSIONS_PAGE_SIZE,
+	);
+	const visibleSessions = state.sessions.slice(0, visibleCount);
+	const remaining = state.sessions.length - visibleCount;
+	const loadMoreHtml =
+		remaining > 0
+			? `<button type="button" class="button-secondary load-more-button" id="load-more-sessions">Load ${Math.min(remaining, SESSIONS_PAGE_SIZE)} more</button>`
+			: '';
+
 	view.innerHTML = `
 		<button type="button" class="back-link" id="back-to-projects">
 			${iconSvg(ICONS.chevronLeft, 'currentColor')}All projects
@@ -542,9 +597,16 @@ function renderSessions() {
 			<h2>${escapeHtml(name)}</h2>
 			<p class="project-path mono">${escapeHtml(path)}</p>
 		</div>
-		<ul class="row-list">${state.sessions.map(sessionRowHtml).join('')}</ul>`;
+		<ul class="row-list">${visibleSessions.map(sessionRowHtml).join('')}</ul>
+		${loadMoreHtml}`;
 
 	document.getElementById('back-to-projects').addEventListener('click', showProjects);
+	if (loadMoreHtml) {
+		document.getElementById('load-more-sessions').addEventListener('click', () => {
+			state.sessionsVisibleExtra++;
+			renderSessions();
+		});
+	}
 	for (const el of view.querySelectorAll('[data-session]')) {
 		el.addEventListener('click', () => {
 			const session = state.sessions.find((s) => s.sessionId === el.dataset.session);
@@ -863,6 +925,16 @@ function findingListHtml(cardsHtml) {
 	`;
 }
 
+// A bucket heading always carries its count, and an empty bucket says so explicitly ("None this
+// audit") rather than disappearing — a category with nothing to report is itself an answer.
+function bucketSectionHtml(icon, iconColor, label, items, cardFn) {
+	const heading = `<h3 class="kind-heading">${iconSvg(icon, iconColor)}${escapeHtml(label)} <span class="kind-heading-count">(${items.length})</span></h3>`;
+	if (items.length === 0) {
+		return `${heading}<p class="empty-bucket">None this audit.</p>`;
+	}
+	return heading + findingListHtml(items.map(cardFn));
+}
+
 function sessionProposalCardHtml(proposal) {
 	const meta = PROPOSAL_STATUS_META[proposal.status];
 	return `
@@ -904,59 +976,145 @@ function recurrenceBadgeHtml(marker) {
 	});
 }
 
-function noteCardHtml(note, meta) {
-	const refHtml =
-		note.ruleRef != null
-			? `<span class="finding-ref">${escapeHtml(note.ruleRef)}</span>`
-			: '<span class="finding-ref">legacy — no rule link</span>';
+// notesByKind groups compliance/environmental notes by rulebook layer (from the API) — this
+// further splits those two kinds by the judgment model's own outcome classification, since
+// outcome is the axis the Findings tab actually organizes cards around. Pre-migration rows have
+// outcome: null and land in their own bucket rather than being guessed into either side.
+function bucketNotesByOutcome(notesByKind) {
+	const violations = [];
+	const positives = [];
+	const unclassified = [];
+	for (const kind of ['compliance', 'environmentalInstruction']) {
+		for (const note of notesByKind[kind] ?? []) {
+			const entry = { ...note, kind };
+			if (note.outcome === 'violation') {
+				violations.push(entry);
+			} else if (note.outcome === 'positive') {
+				positives.push(entry);
+			} else {
+				unclassified.push(entry);
+			}
+		}
+	}
+	return { violations, positives, unclassified };
+}
+
+// Full evidence prose stays available, just never forced open — a card's default state is the
+// one-line summary, matching every other compact card here (positives, prompt coaching).
+function expandableEvidenceHtml(evidence) {
+	return `
+		<details class="evidence-toggle">
+			<summary>Show full evidence</summary>
+			<div class="finding-evidence">${formatEvidence(evidence)}</div>
+		</details>
+	`;
+}
+
+function violationNoteCardHtml(note) {
 	const recurrenceHtml = note.recurrence ? recurrenceBadgeHtml(note.recurrence) : '';
-	const lede = extractLede(note.evidence);
-	const ledeHtml = lede ? `<p class="finding-lede">${escapeHtml(lede)}</p>` : '';
 	return `
 		<article class="finding-card">
-			<div class="finding-head">${badgeHtml(meta)}${refHtml}${recurrenceHtml}</div>
-			${ledeHtml}
-			<div class="finding-evidence">${formatEvidence(note.evidence)}</div>
+			<div class="finding-head">${categoryTagHtml(note.kind)}${recurrenceHtml}</div>
+			<p class="finding-lede">${escapeHtml(shortSummary(note.evidence))}</p>
+			${expandableEvidenceHtml(note.evidence)}
 		</article>
 	`;
 }
 
-function auditHistoryCardHtml(entry) {
+// Compact by design — a positive instance isn't a problem to weigh, just a confirmation, so it
+// gets one line and no evidence expansion at all.
+function positiveNoteCardHtml(note) {
+	return `
+		<div class="positive-row">
+			${iconSvg(ICONS.checkCircle, 'var(--status-good)')}
+			${categoryTagHtml(note.kind)}
+			<span>${escapeHtml(shortSummary(note.evidence))}</span>
+		</div>
+	`;
+}
+
+// Pre-migration rows have no outcome at all — shown as their own bucket rather than folded into
+// either violations or positives, since that would be guessing at a verdict the judgment model
+// never actually made.
+function unclassifiedNoteCardHtml(note) {
+	return `
+		<article class="finding-card">
+			<div class="finding-head">${categoryTagHtml(note.kind)}<span class="finding-ref">Not classified — audited before this feature shipped</span></div>
+			<p class="finding-lede">${escapeHtml(shortSummary(note.evidence))}</p>
+			${expandableEvidenceHtml(note.evidence)}
+		</article>
+	`;
+}
+
+function promptCoachingCardHtml(note) {
+	const suggestionHtml = note.suggestion
+		? `<p class="suggestion-line"><span class="suggestion-tag">Suggested:</span>${escapeHtml(note.suggestion)}</p>`
+		: '<p class="suggestion-line none">No suggested rephrasing given</p>';
+	return `
+		<article class="finding-card">
+			<p class="finding-lede">${escapeHtml(shortSummary(note.evidence))}</p>
+			${suggestionHtml}
+			${expandableEvidenceHtml(note.evidence)}
+		</article>
+	`;
+}
+
+function outcomeLegendHtml() {
+	const item = (icon, color, label) =>
+		`<span class="outcome-legend-item">${iconSvg(icon, color)}${escapeHtml(label)}</span>`;
+	return `
+		<div class="outcome-legend">
+			${item(ICONS.wrench, 'var(--status-warning)', 'Rule change proposed')}
+			${item(ICONS.eye, 'var(--ink-secondary)', 'No rule change — just missed')}
+			${item(ICONS.checkCircle, 'var(--status-good)', 'Followed correctly')}
+			${item(ICONS.chatBubble, 'var(--ink-muted)', 'Feedback on phrasing')}
+		</div>`;
+}
+
+function auditChipHtml(entry) {
 	const meta = SESSION_STATUS_META[entry.status] ?? {
 		color: 'var(--ink-muted)',
 		icon: ICONS.minusCircle,
 		label: entry.status,
 	};
-	const modelHtml = entry.model
-		? `<span class="row-meta mono">${escapeHtml(entry.model)}</span>`
-		: '';
-	const countsHtml =
+	const modelLabel = entry.model ?? meta.label;
+	const countsText =
 		entry.status === 'completed'
-			? `<span class="row-meta">${entry.proposalsCreated ?? '?'} proposals · ${entry.notesCreated ?? '?'} notes</span>`
-			: '';
-	const inner = `${badgeHtml(meta)}<span class="row-meta">${escapeHtml(formatDateTime(entry.auditedAt))}</span>${modelHtml}${countsHtml}`;
+			? `${entry.proposalsCreated ?? '?'} proposals · ${entry.notesCreated ?? '?'} notes`
+			: meta.label;
+	const costText = entry.costUsd != null ? ` · ${formatUsd(entry.costUsd)}` : '';
+	const inner = `
+		<span class="audit-chip-model">${iconSvg(meta.icon, meta.color)}${escapeHtml(modelLabel)}</span>
+		<span class="audit-chip-meta">${escapeHtml(formatDateTime(entry.auditedAt))}</span>
+		<span class="audit-chip-meta">${escapeHtml(countsText)}${escapeHtml(costText)}</span>
+	`;
 	if (entry.isCurrent) {
-		return `
-			<li class="row-card history-current">
-				<span class="row-main">${inner}<span class="row-meta current-tag">Currently viewing</span></span>
-			</li>`;
+		return `<div class="audit-chip current">${inner}</div>`;
 	}
-	return `
-		<li class="row-card">
-			<button type="button" class="row-main" data-history-audit="${escapeHtml(entry.auditedSessionId)}">${inner}</button>
-		</li>`;
+	return `<button type="button" class="audit-chip" data-history-audit="${escapeHtml(entry.auditedSessionId)}">${inner}</button>`;
 }
 
-// A single-audit session has nothing to navigate between, so the list only earns its place once
-// there's an actual choice to make.
-function auditHistoryListHtml(history) {
+const AUDIT_CHIP_VISIBLE_CAP = 5;
+
+// A single-audit session has nothing to switch between, so the strip only earns its place once
+// there's an actual choice to make. Past the visible cap, the rest collapse behind a "+N more"
+// toggle instead of the row wrapping indefinitely.
+function auditChipStripHtml(history) {
 	if (history.length <= 1) {
 		return '';
 	}
+	if (history.length <= AUDIT_CHIP_VISIBLE_CAP) {
+		return `<div class="audit-chip-strip">${history.map(auditChipHtml).join('')}</div>`;
+	}
+	const visible = history.slice(0, AUDIT_CHIP_VISIBLE_CAP - 1);
+	const rest = history.slice(AUDIT_CHIP_VISIBLE_CAP - 1);
 	return `
-		<div class="audit-history">
-			<p class="list-heading">Audit history (${history.length})</p>
-			<ul class="row-list">${history.map(auditHistoryCardHtml).join('')}</ul>
+		<div class="audit-chip-strip">
+			${visible.map(auditChipHtml).join('')}
+			<details>
+				<summary class="audit-chip audit-chip-overflow">+${rest.length} more</summary>
+				<div class="audit-chip-strip">${rest.map(auditChipHtml).join('')}</div>
+			</details>
 		</div>`;
 }
 
@@ -976,10 +1134,19 @@ function renderFindings(data) {
 	const project = state.projects.find((entry) => entry.slug === session.projectSlug);
 	const projectLabel = project ? projectName(project) : session.projectSlug;
 	const projectSubpath = project ? projectPath(project) : session.projectSlug;
-	const currentModel = (data.history ?? []).find((entry) => entry.isCurrent)?.model ?? null;
+	const currentHistoryEntry = (data.history ?? []).find((entry) => entry.isCurrent);
+	const currentModel = currentHistoryEntry?.model ?? null;
 	const modelLine = currentModel
 		? `<p class="summary-meta">Judged by <span class="mono">${escapeHtml(currentModel)}</span></p>`
 		: '';
+	const tokensLine =
+		currentHistoryEntry?.inputTokens != null && currentHistoryEntry?.outputTokens != null
+			? `<p class="summary-meta mono">${formatCount(currentHistoryEntry.inputTokens)} in · ${formatCount(currentHistoryEntry.outputTokens)} out${currentHistoryEntry.costUsd != null ? ` · ${formatUsd(currentHistoryEntry.costUsd)}` : ''}</p>`
+			: '';
+	const backLinkHtml = `
+		<button type="button" class="back-link" id="back-to-project-sessions">
+			${iconSvg(ICONS.chevronLeft, 'currentColor')}Back to ${escapeHtml(projectLabel)} sessions
+		</button>`;
 	const summaryHtml = `
 		<div class="session-summary">
 			<div class="summary-head">
@@ -990,32 +1157,70 @@ function renderFindings(data) {
 			<p class="summary-meta mono">${escapeHtml(projectSubpath)}</p>
 			<p class="summary-meta">Audited ${escapeHtml(formatDateTime(session.auditedAt))}${escapeHtml(counts)}</p>
 			${modelLine}
+			${tokensLine}
 			<div class="summary-actions">
 				<button type="button" class="button-secondary" id="reaudit-findings-button">Re-run audit</button>
 				<button type="button" class="button-secondary" id="export-findings-button">Export as Markdown</button>
 			</div>
 		</div>`;
 
-	const sections = [];
-	if (data.proposals.length > 0) {
-		sections.push(
-			`<h3 class="kind-heading">Rule-rewrite proposals</h3>${findingListHtml(data.proposals.map(sessionProposalCardHtml))}`,
-		);
-	}
-	for (const kind of ['compliance', 'environmentalInstruction', 'promptCoaching']) {
-		const notes = data.notesByKind[kind] ?? [];
-		if (notes.length === 0) {
-			continue;
-		}
-		const kindMeta = NOTE_KIND_META[kind];
-		sections.push(
-			`<h3 class="kind-heading">${escapeHtml(kindMeta.label)}</h3>${findingListHtml(notes.map((note) => noteCardHtml(note, kindMeta)))}`,
-		);
-	}
+	const buckets = bucketNotesByOutcome(data.notesByKind);
+	const promptNotes = data.notesByKind.promptCoaching ?? [];
+	const totalFindings =
+		data.proposals.length +
+		buckets.violations.length +
+		buckets.positives.length +
+		promptNotes.length +
+		buckets.unclassified.length;
 
 	let bodyHtml;
-	if (sections.length > 0) {
-		bodyHtml = sections.join('');
+	if (totalFindings > 0) {
+		// The 4 core buckets always render, counted, even at zero — an empty bucket is itself an
+		// answer ("nothing missed this audit"), not something to hide as if the category didn't
+		// apply. "Not classified" is the exception: a transitional bucket for pre-migration data,
+		// shown only when it actually has something in it.
+		const sections = [
+			bucketSectionHtml(
+				ICONS.wrench,
+				'var(--status-warning)',
+				'Rule change proposed',
+				data.proposals,
+				sessionProposalCardHtml,
+			),
+			bucketSectionHtml(
+				ICONS.eye,
+				'var(--ink-secondary)',
+				'No rule change — just missed',
+				buckets.violations,
+				violationNoteCardHtml,
+			),
+			bucketSectionHtml(
+				ICONS.checkCircle,
+				'var(--status-good)',
+				'Followed correctly',
+				buckets.positives,
+				positiveNoteCardHtml,
+			),
+			bucketSectionHtml(
+				ICONS.chatBubble,
+				'var(--ink-muted)',
+				'Feedback on phrasing',
+				promptNotes,
+				promptCoachingCardHtml,
+			),
+		];
+		if (buckets.unclassified.length > 0) {
+			sections.push(
+				bucketSectionHtml(
+					ICONS.clock,
+					'var(--ink-muted)',
+					'Not classified — audited before this feature shipped',
+					buckets.unclassified,
+					unclassifiedNoteCardHtml,
+				),
+			);
+		}
+		bodyHtml = outcomeLegendHtml() + sections.join('');
 	} else if (session.status === 'wavedThrough') {
 		bodyHtml =
 			'<p class="empty-state">Clean — the free checks found nothing worth a judgment call.</p>';
@@ -1026,9 +1231,13 @@ function renderFindings(data) {
 		bodyHtml = '<p class="empty-state">The judgment call returned no findings.</p>';
 	}
 
-	const historyHtml = auditHistoryListHtml(data.history ?? []);
+	const chipStripHtml = auditChipStripHtml(data.history ?? []);
 
-	panel.innerHTML = summaryHtml + historyHtml + bodyHtml;
+	panel.innerHTML = backLinkHtml + summaryHtml + chipStripHtml + bodyHtml;
+	document.getElementById('back-to-project-sessions').addEventListener('click', async () => {
+		selectTab('sessions');
+		await openProject(session.projectSlug);
+	});
 	document
 		.getElementById('export-findings-button')
 		.addEventListener('click', exportFindingsAsMarkdown);
@@ -1057,6 +1266,11 @@ function buildFindingsMarkdown(data) {
 	const project = state.projects.find((entry) => entry.slug === session.projectSlug);
 	const projectLabel = project ? projectName(project) : session.projectSlug;
 	const projectSubpath = project ? projectPath(project) : session.projectSlug;
+	const currentHistoryEntry = (data.history ?? []).find((entry) => entry.isCurrent);
+	const tokensLine =
+		currentHistoryEntry?.inputTokens != null && currentHistoryEntry?.outputTokens != null
+			? `**Tokens:** ${formatCount(currentHistoryEntry.inputTokens)} in · ${formatCount(currentHistoryEntry.outputTokens)} out${currentHistoryEntry.costUsd != null ? ` · ${formatUsd(currentHistoryEntry.costUsd)}` : ''}`
+			: null;
 
 	const lines = [
 		'# Second Flow findings',
@@ -1065,22 +1279,35 @@ function buildFindingsMarkdown(data) {
 		`**Status:** ${statusLabel}`,
 		`**Project:** ${projectLabel} (${projectSubpath})`,
 		`**Audited:** ${formatDateTime(session.auditedAt)}${counts}`,
+		...(tokensLine ? [tokensLine] : []),
 		'',
 	];
 
-	const sections = [];
-	if (data.proposals.length > 0) {
-		sections.push(['Rule-rewrite proposals', data.proposals.map(proposalMarkdown)]);
-	}
-	for (const kind of ['compliance', 'environmentalInstruction', 'promptCoaching']) {
-		const notes = data.notesByKind[kind] ?? [];
-		if (notes.length === 0) {
-			continue;
-		}
-		sections.push([NOTE_KIND_META[kind].label, notes.map(noteMarkdown)]);
+	const buckets = bucketNotesByOutcome(data.notesByKind);
+	const promptNotes = data.notesByKind.promptCoaching ?? [];
+	const totalFindings =
+		data.proposals.length +
+		buckets.violations.length +
+		buckets.positives.length +
+		promptNotes.length +
+		buckets.unclassified.length;
+
+	// The 4 core buckets always get a heading (with count), even at zero — mirrors renderFindings'
+	// "an empty bucket is itself an answer" treatment. "Not classified" stays conditional.
+	const sections = [
+		['Rule change proposed', data.proposals.map(proposalMarkdown)],
+		['No rule change — just missed', buckets.violations.map(noteMarkdown)],
+		['Followed correctly', buckets.positives.map(positiveNoteMarkdown)],
+		['Feedback on phrasing', promptNotes.map(promptCoachingMarkdown)],
+	];
+	if (buckets.unclassified.length > 0) {
+		sections.push([
+			'Not classified — audited before this feature shipped',
+			buckets.unclassified.map(noteMarkdown),
+		]);
 	}
 
-	if (sections.length === 0) {
+	if (totalFindings === 0) {
 		if (session.status === 'wavedThrough') {
 			lines.push('Clean — the free checks found nothing worth a judgment call.');
 		} else if (session.status === 'errored') {
@@ -1094,7 +1321,11 @@ function buildFindingsMarkdown(data) {
 	}
 
 	for (const [heading, cards] of sections) {
-		lines.push(`## ${heading}`, '', cards.join('\n'));
+		lines.push(
+			`## ${heading} (${cards.length})`,
+			'',
+			cards.length > 0 ? cards.join('\n') : '_None this audit._',
+		);
 	}
 	return lines.join('\n');
 }
@@ -1156,6 +1387,21 @@ function noteMarkdown(note) {
 		lines.push(`**Recurrence:** ${recurrenceLabelText(note.recurrence)}`, '');
 	}
 	lines.push(note.evidence, '');
+	return lines.join('\n');
+}
+
+// Mirrors positiveNoteCardHtml's compactness — a confirmation, not a problem to weigh, so one
+// bullet line rather than the full ref/recurrence/evidence card the other note kinds get.
+function positiveNoteMarkdown(note) {
+	return `- ${shortSummary(note.evidence)}`;
+}
+
+function promptCoachingMarkdown(note) {
+	const lines = [note.evidence, ''];
+	lines.push(
+		note.suggestion ? `**Suggested:** ${note.suggestion}` : '_No suggested rephrasing given_',
+		'',
+	);
 	return lines.join('\n');
 }
 

@@ -450,16 +450,25 @@ export function createSessionsRouter(deps: SessionsRouterDeps = {}): Router {
 		const modelByAuditRunId = new Map(
 			judgmentCalls.map((call) => [call.auditRunId, call.model]),
 		);
-		// A re-audit's judgment call is the one that determines its findings, so its cost is what's
-		// meaningful here — not the activation/reconciliation spend, which isn't tied to a single run.
+		// A re-audit's judgment call is the one that determines its findings, so its cost/tokens are
+		// what's meaningful here — not the activation/reconciliation spend, which isn't tied to a
+		// single run.
 		const costByAuditRunId = new Map(
 			judgmentCalls.map((call) => [call.auditRunId, computeCallCostUsd(call)]),
+		);
+		const tokensByAuditRunId = new Map(
+			judgmentCalls.map((call) => [
+				call.auditRunId,
+				{ inputTokens: call.inputTokens, outputTokens: call.outputTokens },
+			]),
 		);
 		const history = historyRows.map((row) => ({
 			auditedSessionId: row.id,
 			status: row.status,
 			model: modelByAuditRunId.get(row.auditRunId) ?? null,
 			costUsd: costByAuditRunId.get(row.auditRunId) ?? null,
+			inputTokens: tokensByAuditRunId.get(row.auditRunId)?.inputTokens ?? null,
+			outputTokens: tokensByAuditRunId.get(row.auditRunId)?.outputTokens ?? null,
 			auditedAt: row.createdAt.toISOString(),
 			proposalsCreated: row.proposalsCreated,
 			notesCreated: row.notesCreated,

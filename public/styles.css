@@ -12,6 +12,14 @@
 	--status-warning: #fab219;
 	--status-serious: #ec835a;
 	--status-critical: #d03b3b;
+	/* Category tags (Compliance/Environmental) are identity, not severity — kept off the
+	   good/warning/serious/critical palette so they never read as a severity signal. */
+	--category-compliance: #6a8fd8;
+	--category-environmental: #4fb3a9;
+	/* Selection accent (the currently-viewed audit chip) — distinct from every status/category
+	   color so "this one is selected" never gets mistaken for a severity or category signal. */
+	--accent: #6a9bd8;
+	--accent-dim: rgba(106, 155, 216, 0.14);
 }
 
 * {
@@ -328,6 +336,10 @@ code,
 	font-size: 1.25rem;
 }
 
+.load-more-button {
+	margin-top: 14px;
+}
+
 .row-badges {
 	display: flex;
 	align-items: center;
@@ -408,23 +420,6 @@ code,
 	margin-top: 10px;
 }
 
-.audit-history {
-	margin-bottom: 18px;
-}
-
-.row-card.history-current {
-	border-color: var(--ink-primary);
-}
-
-.row-card.history-current .row-main {
-	cursor: default;
-}
-
-.current-tag {
-	color: var(--ink-primary);
-	font-weight: 600;
-}
-
 .finding-list {
 	display: flex;
 	flex-direction: column;
@@ -450,7 +445,7 @@ code,
 	display: inline-flex;
 	align-items: center;
 	gap: 5px;
-	font-size: 0.8rem;
+	font-size: 0.85rem;
 	font-weight: 600;
 	border-radius: 999px;
 	padding: 3px 10px 3px 8px;
@@ -463,9 +458,28 @@ code,
 	flex: none;
 }
 
+/* Category identity (Compliance/Environmental) — deliberately not a .badge: it never carries a
+   severity color, just which rulebook layer the finding is about. */
+.category-tag {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 0.8rem;
+	font-weight: 600;
+	border-radius: 999px;
+	padding: 2px 9px 2px 7px;
+	border: 1px solid currentColor;
+}
+
+.category-tag svg {
+	width: 13px;
+	height: 13px;
+	flex: none;
+}
+
 .finding-ref {
 	color: var(--ink-secondary);
-	font-size: 0.85rem;
+	font-size: 0.9rem;
 	word-break: break-all;
 }
 
@@ -485,14 +499,14 @@ code,
 .finding-text {
 	margin: 6px 0 0;
 	color: var(--ink-primary);
-	font-size: 0.92rem;
+	font-size: 1rem;
 	white-space: pre-wrap;
 }
 
 .finding-evidence {
 	margin-top: 8px;
 	color: var(--ink-secondary);
-	font-size: 0.85rem;
+	font-size: 0.95rem;
 	white-space: pre-wrap;
 	border-left: 2px solid var(--hairline);
 	padding-left: 10px;
@@ -523,19 +537,192 @@ code,
 	margin: 6px 0 4px;
 }
 
-.kind-heading {
+/* Compact-by-default cards (violations, unclassified, prompt coaching) show a one-line summary
+   up front — the full evidence prose sits behind an explicit expand, never forced open. */
+.evidence-toggle {
+	margin-top: 8px;
+}
+
+.evidence-toggle summary {
+	cursor: pointer;
+	color: var(--ink-muted);
+	font-size: 0.85rem;
+	list-style: none;
+}
+
+.evidence-toggle summary::-webkit-details-marker {
+	display: none;
+}
+
+.evidence-toggle summary:hover {
 	color: var(--ink-secondary);
-	font-size: 0.9rem;
-	margin: 20px 0 10px;
+}
+
+.evidence-toggle[open] summary {
+	margin-bottom: 6px;
+}
+
+.kind-heading {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--ink-secondary);
+	font-size: 1rem;
+	font-weight: 600;
+	margin: 22px 0 10px;
+}
+
+.kind-heading svg {
+	width: 20px;
+	height: 20px;
+	flex: none;
 }
 
 .kind-heading:first-child {
 	margin-top: 0;
 }
 
+.kind-heading-count {
+	color: var(--ink-muted);
+	font-weight: 400;
+	font-size: 0.9rem;
+}
+
 .empty-state {
 	color: var(--ink-muted);
 	font-size: 0.9rem;
+}
+
+.empty-bucket {
+	color: var(--ink-muted);
+	font-size: 0.9rem;
+	font-style: italic;
+	margin: 0;
+}
+
+/* ---- Outcome legend ---- */
+
+.outcome-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 18px;
+	margin-bottom: 18px;
+	padding: 12px 16px;
+	border: 1px solid var(--hairline);
+	border-radius: 8px;
+}
+
+.outcome-legend-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 0.88rem;
+	color: var(--ink-secondary);
+}
+
+.outcome-legend-item svg {
+	width: 22px;
+	height: 22px;
+	flex: none;
+}
+
+/* ---- Positive-compliance rows: compact, one line, no severity weight ---- */
+
+.positive-row {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	padding: 6px 0;
+	border-bottom: 1px solid var(--hairline);
+	font-size: 0.92rem;
+	color: var(--ink-secondary);
+}
+
+.positive-row:last-child {
+	border-bottom: none;
+}
+
+.positive-row svg {
+	width: 16px;
+	height: 16px;
+	flex: none;
+	color: var(--status-good);
+}
+
+/* ---- Prompt-coaching suggestion line ---- */
+
+.suggestion-line {
+	display: flex;
+	gap: 6px;
+	margin-top: 6px;
+	font-size: 0.9rem;
+	color: var(--ink-secondary);
+}
+
+.suggestion-line .suggestion-tag {
+	color: var(--status-warning);
+	font-weight: 600;
+	flex: none;
+}
+
+.suggestion-line.none {
+	color: var(--ink-muted);
+	font-style: italic;
+}
+
+/* ---- Audit selector: one chip per audit of this session, click to switch ---- */
+
+.audit-chip-strip {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-bottom: 18px;
+}
+
+.audit-chip {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	background: var(--surface-card);
+	border: 1px solid var(--hairline);
+	border-radius: 8px;
+	padding: 8px 12px;
+	font-size: 0.85rem;
+	color: var(--ink-secondary);
+	text-align: left;
+	cursor: pointer;
+	min-width: 150px;
+}
+
+.audit-chip:hover {
+	border-color: rgba(255, 255, 255, 0.25);
+}
+
+.audit-chip.current {
+	border-color: var(--accent);
+	background: var(--accent-dim);
+	color: var(--ink-primary);
+	cursor: default;
+}
+
+.audit-chip-model {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-weight: 600;
+}
+
+.audit-chip-meta {
+	color: var(--ink-muted);
+	font-size: 0.8rem;
+	font-variant-numeric: tabular-nums;
+}
+
+.audit-chip-overflow {
+	align-self: stretch;
+	justify-content: center;
+	align-items: center;
+	color: var(--ink-secondary);
 }
 
 details.more-findings {
