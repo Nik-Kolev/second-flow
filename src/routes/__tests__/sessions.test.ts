@@ -295,9 +295,9 @@ test('preview on a triggered session returns trigger summary and a priced token 
 	assert.deepEqual(body.triggers, [{ kind: 'lint-finding', count: 1 }]);
 	assert.ok(body.estimate, 'a triggered preview must carry an estimate');
 	assert.equal(body.estimate.inputTokens, 5000);
-	// 5000 input tokens at $2/MTok, plus 4096 max output at $10/MTok.
+	// 5000 input tokens at $2/MTok, plus 8192 max output at $10/MTok.
 	assert.ok(Math.abs(body.estimate.inputCostUsd - 0.01) < 1e-9);
-	assert.ok(Math.abs(body.estimate.maxTotalCostUsd - (0.01 + 0.04096)) < 1e-9);
+	assert.ok(Math.abs(body.estimate.maxTotalCostUsd - (0.01 + 0.08192)) < 1e-9);
 });
 
 test('preview is 404 for a transcript that does not exist', async () => {
