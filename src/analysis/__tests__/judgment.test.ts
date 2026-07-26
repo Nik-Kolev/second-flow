@@ -173,11 +173,20 @@ function wellFormedInput(): JudgmentToolInput {
 			},
 		],
 		complianceNotes: [
-			{ evidence: 'turn 5: format-before-commit followed correctly', ruleRef: 'CLAUDE.md' },
+			{
+				evidence: 'turn 5: format-before-commit followed correctly',
+				ruleRef: 'CLAUDE.md',
+				outcome: 'positive',
+			},
 		],
 		environmentalInstructionIgnoredNotes: [],
 		promptCoachingNotes: [
-			{ evidence: 'turn 1: vague prompt caused 2 clarifying questions', ruleRef: 'general' },
+			{
+				evidence: 'turn 1: vague prompt caused 2 clarifying questions',
+				ruleRef: 'general',
+				suggestion:
+					'State the acceptance criteria up front instead of leaving scope implicit.',
+			},
 		],
 	};
 }
@@ -197,7 +206,9 @@ test('a well-formed response returns completed findings and logs a Sonnet AuditR
 	}
 	assert.equal(outcome.findings.ruleRewriteProposals.length, 1);
 	assert.equal(outcome.findings.complianceNotes.length, 1);
+	assert.equal(outcome.findings.complianceNotes[0].outcome, 'positive');
 	assert.equal(outcome.findings.promptCoachingNotes.length, 1);
+	assert.ok(outcome.findings.promptCoachingNotes[0].suggestion.length > 0);
 	assert.equal(outcome.droppedProposalCount, 0);
 
 	const callRows = await testPrisma.auditRunCall.findMany({ where: { auditRunId: auditRun.id } });
@@ -275,7 +286,11 @@ test("a rule-rewrite proposal citing a targetRuleRef outside the rulebook's file
 test('a note citing a memory-block source is preserved, not coerced to "general"', async () => {
 	const input = wellFormedInput();
 	input.complianceNotes = [
-		{ evidence: 'turn 5: ignored a documented gotcha', ruleRef: MEMORY_BLOCK_SOURCE },
+		{
+			evidence: 'turn 5: ignored a documented gotcha',
+			ruleRef: MEMORY_BLOCK_SOURCE,
+			outcome: 'violation',
+		},
 	];
 	const fake = makeFakeAnthropic(input);
 	const auditRun = await testPrisma.auditRun.create({ data: {} });
@@ -349,11 +364,17 @@ test('persistJudgmentFindings writes RuleProposal and AnalysisNote rows against 
 				evidence: 'turn 3',
 			},
 		],
-		complianceNotes: [{ evidence: 'turn 5', ruleRef: 'CLAUDE.md' }],
-		environmentalInstructionIgnoredNotes: [{ evidence: 'turn 7', ruleRef: 'general' }],
+		complianceNotes: [{ evidence: 'turn 5', ruleRef: 'CLAUDE.md', outcome: 'violation' }],
+		environmentalInstructionIgnoredNotes: [
+			{ evidence: 'turn 7', ruleRef: 'general', outcome: 'positive' },
+		],
 		promptCoachingNotes: [
-			{ evidence: 'turn 1', ruleRef: 'general' },
-			{ evidence: 'turn 2', ruleRef: 'general' },
+			{ evidence: 'turn 1', ruleRef: 'general', suggestion: 'Name the acceptance criteria.' },
+			{
+				evidence: 'turn 2',
+				ruleRef: 'general',
+				suggestion: 'Split the two asks into two turns.',
+			},
 		],
 	};
 
@@ -370,6 +391,15 @@ test('persistJudgmentFindings writes RuleProposal and AnalysisNote rows against 
 	assert.equal(notes.length, 4);
 	const complianceNote = notes.find((note) => note.kind === AnalysisNoteKind.compliance);
 	assert.equal(complianceNote?.ruleRef, 'CLAUDE.md', 'ruleRef must be persisted on the row');
+	assert.equal(complianceNote?.outcome, 'violation', 'outcome must be persisted on the row');
+	const envNote = notes.find((note) => note.kind === AnalysisNoteKind.environmentalInstruction);
+	assert.equal(envNote?.outcome, 'positive');
+	const promptNotes = notes.filter((note) => note.kind === AnalysisNoteKind.promptCoaching);
+	assert.deepEqual(
+		promptNotes.map((note) => note.suggestion).sort(),
+		['Name the acceptance criteria.', 'Split the two asks into two turns.'],
+		'suggestion must be persisted on promptCoaching rows',
+	);
 	const kinds = notes.map((note) => note.kind).sort();
 	assert.deepEqual(
 		kinds,
@@ -425,7 +455,11 @@ test('a response with no tool_use block is isolated: errored, but spend is logge
 test('a note citing an invented ruleRef is coerced to "general", never dropped', async () => {
 	const input = wellFormedInput();
 	input.complianceNotes = [
-		{ evidence: 'turn 5: real note, invented file ref', ruleRef: 'invented-file.md' },
+		{
+			evidence: 'turn 5: real note, invented file ref',
+			ruleRef: 'invented-file.md',
+			outcome: 'violation',
+		},
 	];
 	const fake = makeFakeAnthropic(input);
 	const auditRun = await testPrisma.auditRun.create({ data: {} });
@@ -449,7 +483,7 @@ test('a note citing an invented ruleRef is coerced to "general", never dropped',
 
 test('a note missing its ruleRef is a parse failure: errored, spend logged, raw response kept', async () => {
 	const input = wellFormedInput();
-	input.complianceNotes = [{ evidence: 'note with no ruleRef at all' }];
+	input.complianceNotes = [{ evidence: 'note with no ruleRef at all', outcome: 'violation' }];
 	const fake = makeFakeAnthropic(input);
 	const auditRun = await testPrisma.auditRun.create({ data: {} });
 
@@ -559,4 +593,73 @@ test('a simulated network failure logs zero spend and does not throw', async () 
 	}
 	const callRows = await testPrisma.auditRunCall.findMany({ where: { auditRunId: auditRun.id } });
 	assert.equal(callRows.length, 0, 'no response ever came back, so no usage exists to log');
+});
+
+test('a compliance note with an invalid outcome value is a parse failure', async () => {
+	const input = wellFormedInput();
+	input.complianceNotes = [
+		{ evidence: 'turn 5: some finding', ruleRef: 'CLAUDE.md', outcome: 'compliant' },
+	];
+	const fake = makeFakeAnthropic(input);
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+
+	const outcome = await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), [], {
+		prisma: testPrisma,
+		anthropic: fake.client,
+	});
+
+	assert.equal(outcome.outcome, 'errored');
+	const callRows = await testPrisma.auditRunCall.findMany({ where: { auditRunId: auditRun.id } });
+	assert.equal(callRows.length, 1);
+	assert.match(callRows[0].errorText ?? '', /outcome/);
+});
+
+test('a promptCoaching note missing its suggestion is a parse failure', async () => {
+	const input = wellFormedInput();
+	input.promptCoachingNotes = [{ evidence: 'turn 1: vague prompt', ruleRef: 'general' }];
+	const fake = makeFakeAnthropic(input);
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+
+	const outcome = await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), [], {
+		prisma: testPrisma,
+		anthropic: fake.client,
+	});
+
+	assert.equal(outcome.outcome, 'errored');
+	const callRows = await testPrisma.auditRunCall.findMany({ where: { auditRunId: auditRun.id } });
+	assert.equal(callRows.length, 1);
+	assert.match(callRows[0].errorText ?? '', /suggestion/);
+});
+
+test('a promptCoaching note with an empty suggestion is a parse failure', async () => {
+	const input = wellFormedInput();
+	input.promptCoachingNotes = [
+		{ evidence: 'turn 1: vague prompt', ruleRef: 'general', suggestion: '' },
+	];
+	const fake = makeFakeAnthropic(input);
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+
+	const outcome = await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), [], {
+		prisma: testPrisma,
+		anthropic: fake.client,
+	});
+
+	assert.equal(outcome.outcome, 'errored');
+	const callRows = await testPrisma.auditRunCall.findMany({ where: { auditRunId: auditRun.id } });
+	assert.equal(callRows.length, 1);
+	assert.match(callRows[0].errorText ?? '', /suggestion/);
+});
+
+test('the prompt instructs splitting a mixed-verdict incident into two notes', async () => {
+	const fake = makeFakeAnthropic(wellFormedInput());
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+
+	await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), [], {
+		prisma: testPrisma,
+		anthropic: fake.client,
+	});
+
+	const requestParams = fake.lastParams() as { messages: Array<{ content: string }> };
+	assert.ok(requestParams.messages[0].content.includes('two separate notes'));
+	assert.ok(requestParams.messages[0].content.includes('concrete rephrasing'));
 });

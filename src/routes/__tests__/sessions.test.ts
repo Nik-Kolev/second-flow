@@ -65,6 +65,7 @@ function makeFakeAnthropic() {
 										{
 											evidence: 'commit made without approval',
 											ruleRef: 'general',
+											outcome: 'violation',
 										},
 									],
 									environmentalInstructionIgnoredNotes: [],
@@ -471,6 +472,7 @@ test('GET /api/sessions/:auditedSessionId includes every audit of the same trans
 			auditedSessionId: string;
 			status: string;
 			model: string | null;
+			costUsd: number | null;
 			isCurrent: boolean;
 		}>;
 	};
@@ -480,6 +482,8 @@ test('GET /api/sessions/:auditedSessionId includes every audit of the same trans
 	for (const entry of body.history) {
 		assert.equal(entry.status, 'completed');
 		assert.equal(entry.model, 'claude-sonnet-5');
+		// Fake judgment usage is 4000 input / 200 output tokens at sonnet's $2/$10 per MTok rate.
+		assert.equal(entry.costUsd, 0.01, 'costUsd must reflect the real judgment call usage');
 	}
 	assert.equal(body.history[0].isCurrent, false, 'isCurrent tracks the URL param, not recency');
 	assert.equal(body.history[1].isCurrent, true);
@@ -495,10 +499,16 @@ test('GET /api/sessions/:auditedSessionId reports a single-entry history with a 
 
 	const res = await fetch(`${baseUrl}/api/sessions/${auditedSessionId}`);
 	const body = (await res.json()) as {
-		history: Array<{ auditedSessionId: string; model: string | null; isCurrent: boolean }>;
+		history: Array<{
+			auditedSessionId: string;
+			model: string | null;
+			costUsd: number | null;
+			isCurrent: boolean;
+		}>;
 	};
 	assert.equal(body.history.length, 1);
 	assert.equal(body.history[0].auditedSessionId, auditedSessionId);
 	assert.equal(body.history[0].model, null);
+	assert.equal(body.history[0].costUsd, null, 'no judgment call ran, so there is no cost');
 	assert.equal(body.history[0].isCurrent, true);
 });
