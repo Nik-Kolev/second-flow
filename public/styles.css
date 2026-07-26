@@ -408,6 +408,23 @@ code,
 	margin-top: 10px;
 }
 
+.audit-history {
+	margin-bottom: 18px;
+}
+
+.row-card.history-current {
+	border-color: var(--ink-primary);
+}
+
+.row-card.history-current .row-main {
+	cursor: default;
+}
+
+.current-tag {
+	color: var(--ink-primary);
+	font-weight: 600;
+}
+
 .finding-list {
 	display: flex;
 	flex-direction: column;
