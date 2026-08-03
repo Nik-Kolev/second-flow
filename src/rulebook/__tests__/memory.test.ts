@@ -56,6 +56,23 @@ test('classifies a Read of a global memory file', async () => {
 	]);
 });
 
+test(
+	'a recorded Read path differing only in case from homedir still matches (Windows)',
+	{ skip: os.platform() !== 'win32' ? 'case-insensitive matching is Windows-only' : false },
+	async () => {
+		const { homeDir, cwd, globalMemoryDir } = await makeFixture();
+		const filePath = path.join(globalMemoryDir, 'gotcha.md');
+		await writeFile(filePath, 'a documented gotcha');
+
+		const paths = extractReadPaths([readCall(filePath.toUpperCase())], cwd, { homeDir });
+		assert.equal(
+			paths.globalMemory.size,
+			1,
+			'a real memory-dir read must not be silently dropped just because casing differs',
+		);
+	},
+);
+
 test('classifies a Read of a project memory file', async () => {
 	const { homeDir, cwd, projectMemoryDir } = await makeFixture();
 	const filePath = path.join(projectMemoryDir, 'current-state.md');

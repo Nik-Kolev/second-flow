@@ -2,15 +2,14 @@ import type Anthropic from '@anthropic-ai/sdk';
 import anthropicClient from '../lib/anthropic.js';
 import prismaClient from '../lib/prisma.js';
 import { AnalysisNoteKind, NoteOutcome } from '../generated/prisma/index.js';
-import type { AssistantContentBlock, TimelineEvent } from '../parser/index.js';
+import type { AssistantContentBlock, TimelineEvent, ToolCallResult } from '../parser/index.js';
 import type { RulebookResolution } from '../rulebook/index.js';
 import { getAuditSettings } from './settings.js';
 
 const JUDGMENT_TOOL_NAME = 'report_judgment_findings';
 export const JUDGMENT_PURPOSE = 'judgment';
 
-// The ruleRef a note falls back to when it ties to no single rulebook file — also what an invalid
-// model-invented value is coerced to, so a bad ref degrades to "unlinked" instead of being dropped.
+// Fallback ruleRef for notes with no file match, or an invalid model-invented value.
 export const GENERAL_RULE_REF = 'general';
 
 interface JudgmentAnthropicClient {
@@ -39,9 +38,7 @@ interface RuleRewriteProposalInput {
 	evidence: string;
 }
 
-// The judgment model classifies outcome itself at generation time — never inferred from
-// evidence text after the fact. A single incident that's compliant one moment and missed the
-// next must come back as two separate notes (one of each outcome), not one note conflating both.
+// Model classifies outcome at generation time; one incident spanning both outcomes becomes two notes.
 interface ComplianceOrEnvNoteInput {
 	evidence: string;
 	ruleRef: string;
@@ -62,26 +59,44 @@ export interface JudgmentFindings {
 }
 
 export type JudgmentCallOutcome =
-	// droppedProposalCount: proposals Sonnet returned that the valid-source filter removed — the
-	// difference between "Sonnet found nothing" and "Sonnet found things we threw away".
+	// droppedProposalCount distinguishes "found nothing" from "found some, filtered as invalid".
 	| { outcome: 'completed'; findings: JudgmentFindings; droppedProposalCount: number }
 	| { outcome: 'errored'; usageLogged: boolean };
 
-// 600, up from the original 300: truncated evidence was starving the judgment of context, and the
-// input-cost impact is bounded by the evidence window's fixed size, not the transcript's.
+// 600 (up from 300) — truncation was starving judgment of context; cost is capped by the window.
 const MAX_FIELD_LENGTH = 600;
 
 function truncate(text: string): string {
 	return text.length > MAX_FIELD_LENGTH ? `${text.slice(0, MAX_FIELD_LENGTH)}…` : text;
 }
 
-// AssistantContentBlock's last variant is an open `{ type: string; ... }` catch-all that overlaps
-// the named variants, so a `.filter` type guard alone doesn't narrow — cast explicitly instead.
+// Guards a real flake where evidence: "placeholder" persisted unvalidated — real evidence is never this short.
+const MIN_EVIDENCE_LENGTH = 20;
+
+function isDegenerateEvidence(evidence: string): boolean {
+	return evidence.trim().length < MIN_EVIDENCE_LENGTH;
+}
+
+// The catch-all variant overlaps named ones, so `.filter` alone can't narrow — cast explicitly.
 function extractAssistantText(content: AssistantContentBlock[]): string {
 	return content
 		.filter((block) => block.type === 'text')
 		.map((block) => (block as { type: 'text'; text: string }).text)
 		.join(' ');
+}
+
+// Without this, a failed command (e.g. a failing "npm test") is indistinguishable from a passing one in the evidence text — the judgment model needs pass/fail to ground a "verify by running" finding.
+function describeToolResult(result: ToolCallResult): string {
+	switch (result.kind) {
+		case 'pending':
+			return '(pending)';
+		case 'sync':
+			return truncate(result.text);
+		case 'async-task-notification':
+			return truncate(
+				`${result.status ?? 'unknown'}${result.summary ? `: ${result.summary}` : ''}`,
+			);
+	}
 }
 
 function serializeEvent(event: TimelineEvent): string {
@@ -91,7 +106,7 @@ function serializeEvent(event: TimelineEvent): string {
 		case 'assistant-turn':
 			return `ASSISTANT: ${truncate(extractAssistantText(event.content))}`;
 		case 'tool-call':
-			return `TOOL_CALL[${event.toolName}]: ${truncate(JSON.stringify(event.input))}`;
+			return `TOOL_CALL[${event.toolName}]: ${truncate(JSON.stringify(event.input))} → RESULT: ${describeToolResult(event.result)}`;
 		case 'slash-command':
 			return `SLASH_COMMAND: /${event.commandName}${event.commandArgs ? ` ${event.commandArgs}` : ''}`;
 		case 'system':
@@ -127,9 +142,7 @@ function buildJudgmentPrompt(
 	evidenceWindow: TimelineEvent[],
 	flaggedSignals: string[],
 ): string {
-	// Some trigger kinds (rate-limit hits, cache-ratio drops) aren't visible as text anywhere in
-	// the evidence window itself — the window only shows the surrounding conversation, not the
-	// quantitative fact that caused this window to be flagged in the first place.
+	// Some trigger kinds (rate-limit hits, cache-ratio drops) aren't visible as text in the evidence window itself.
 	const signalsSection =
 		flaggedSignals.length > 0
 			? [
@@ -255,8 +268,7 @@ export interface JudgmentRequestParams {
 	messages: Array<{ role: 'user'; content: string }>;
 }
 
-// Exported so the preview route can feed the exact same request shape to the free count_tokens
-// endpoint — an estimate computed from anything other than the real params would drift.
+// Exported so the preview route's free count_tokens estimate uses the exact same request shape, or it would drift.
 export function buildJudgmentRequestParams(
 	model: string,
 	rulebook: RulebookResolution,
@@ -265,11 +277,7 @@ export function buildJudgmentRequestParams(
 ): JudgmentRequestParams {
 	return {
 		model,
-		// A model with substantial real evidence to report can exhaust the budget on the
-		// earlier required schema fields (ruleRewriteProposals, complianceNotes) before ever
-		// reaching the later ones (environmentalInstructionIgnoredNotes, promptCoachingNotes),
-		// producing a syntactically valid but incomplete response that fails required-field
-		// validation. Confirmed against claude-opus-5 on a real, evidence-dense session at 4096.
+		// 8192: at 4096, Opus 5 exhausted the budget on earlier fields, failing required-field validation.
 		max_tokens: 8192,
 		tools: [buildJudgmentTool()],
 		tool_choice: { type: 'tool', name: JUDGMENT_TOOL_NAME },
@@ -282,8 +290,7 @@ export function buildJudgmentRequestParams(
 	};
 }
 
-// Explicit deps override first, then the persisted setting — the DB read only happens when no
-// override is given, so tests and the CLI can pin a model without touching AuditSettings.
+// Explicit override wins; DB read only happens otherwise, so tests/CLI can pin a model directly.
 export async function resolveJudgmentModel(deps: JudgmentDeps = {}): Promise<string> {
 	if (deps.judgmentModel) {
 		return deps.judgmentModel;
@@ -385,8 +392,7 @@ function validateProposalArray(value: unknown): RuleRewriteProposalInput[] {
 	});
 }
 
-// External-API boundary, same failure-mode reasoning as ledger.ts/activation.ts: a silently
-// malformed response must not be treated as "no findings" — that would be a silent false negative.
+// A silently malformed response must not read as "no findings" — that's a silent false negative.
 function extractJudgmentFindings(response: Anthropic.Message): JudgmentFindings {
 	const toolUseBlock = response.content.find(
 		(block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
@@ -413,19 +419,14 @@ function extractJudgmentFindings(response: Anthropic.Message): JudgmentFindings 
 	};
 }
 
-// The forced tool-use schema has no way to constrain targetRuleRef to an enum of valid sources,
-// so Sonnet's own string output is the only guard — a hallucinated or reworded path must not
-// reach RuleProposal, since it would later fail ledger.ts's reconciliation lookup indistinguishably
-// from a legitimately-moved file. CLAUDE.md files only — memory/stack files are never rewrite
-// targets, since their edit lifecycle already goes through the user's own memory-promotion process.
+// Guards against a hallucinated targetRuleRef — only real CLAUDE.md files are valid rewrite targets.
 function rewriteTargetSources(rulebook: RulebookResolution): Set<string> {
 	return new Set(
 		rulebook.blocks.filter((block) => block.origin === 'file').map((block) => block.source),
 	);
 }
 
-// Wider than rewriteTargetSources: a note (unlike a proposal) is allowed to cite a memory/stack
-// file by path — it's just never allowed to propose rewriting one.
+// Wider than rewriteTargetSources: a note may cite a memory/stack file, just never propose rewriting one.
 function validRuleRefSources(rulebook: RulebookResolution): Set<string> {
 	return new Set(
 		rulebook.blocks
@@ -479,13 +480,10 @@ export async function runJudgmentCall(
 		return { outcome: 'errored', usageLogged: false };
 	}
 
-	// The call succeeded and real tokens were spent, regardless of whether the response content
-	// below parses cleanly — log the spend before attempting to interpret the findings.
+	// Log the spend before interpreting the response — tokens were billed regardless of parse outcome.
 	const callId = await logAuditRunCall(auditRunId, model, response.usage, prisma);
 
-	// Opus 5/Fable 5 streaming classifiers can end a billed response with stop_reason 'refusal' —
-	// no tool_use block follows, so treat it as an errored call with its own explanation rather
-	// than letting extraction fail with a misleading "no tool_use block" message.
+	// Opus 5/Fable 5 can end with stop_reason 'refusal' and no tool_use block — treat as errored, not a misleading parse failure.
 	if (response.stop_reason === 'refusal') {
 		await prisma.auditRunCall.update({
 			where: { id: callId },
@@ -502,12 +500,12 @@ export async function runJudgmentCall(
 		const rewriteSources = rewriteTargetSources(rulebook);
 		const ruleRefSources = validRuleRefSources(rulebook);
 		const returnedProposalCount = findings.ruleRewriteProposals.length;
-		findings.ruleRewriteProposals = findings.ruleRewriteProposals.filter((proposal) =>
-			rewriteSources.has(proposal.targetRuleRef),
+		findings.ruleRewriteProposals = findings.ruleRewriteProposals.filter(
+			(proposal) =>
+				rewriteSources.has(proposal.targetRuleRef) &&
+				!isDegenerateEvidence(proposal.evidence),
 		);
-		// Notes degrade instead of dropping: an invented ruleRef would recreate for notes the exact
-		// silent-filter bug the proposal counter above exists to expose — coerce to "general" so the
-		// note survives, merely unlinked from a file.
+		// Notes degrade instead of dropping — coerce an invented ruleRef to "general" so the note survives.
 		for (const noteArray of [
 			findings.complianceNotes,
 			findings.environmentalInstructionIgnoredNotes,
@@ -519,14 +517,24 @@ export async function runJudgmentCall(
 				}
 			}
 		}
+		// Unlike ruleRef, degenerate evidence has no recoverable value — drop the note instead of degrading it.
+		findings.complianceNotes = findings.complianceNotes.filter(
+			(note) => !isDegenerateEvidence(note.evidence),
+		);
+		findings.environmentalInstructionIgnoredNotes =
+			findings.environmentalInstructionIgnoredNotes.filter(
+				(note) => !isDegenerateEvidence(note.evidence),
+			);
+		findings.promptCoachingNotes = findings.promptCoachingNotes.filter(
+			(note) => !isDegenerateEvidence(note.evidence),
+		);
 		return {
 			outcome: 'completed',
 			findings,
 			droppedProposalCount: returnedProposalCount - findings.ruleRewriteProposals.length,
 		};
 	} catch (error) {
-		// The findings are discarded, but the raw response must survive on the call row — without
-		// it, an errored run is unreconstructable and indistinguishable from "found nothing".
+		// Raw response must survive on the call row — without it, errored looks identical to "found nothing".
 		await prisma.auditRunCall.update({
 			where: { id: callId },
 			data: {

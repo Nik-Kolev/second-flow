@@ -23,12 +23,7 @@ export interface ProposalGroup {
 	latestCreatedAt: Date;
 }
 
-// Groups by (auditedSessionId, targetRuleRef): a single Sonnet call can return multiple
-// ruleRewriteProposals targeting the same file within one audited session (persistJudgmentFindings
-// writes one row per array item, no dedup at write time) — this collapses exactly those real
-// duplicates. It deliberately does NOT collapse the same targetRuleRef across different
-// AuditedSession rows: a gap recurring across separate sessions/runs is a distinct occurrence
-// worth seeing on its own, not noise to merge away.
+// Groups by (auditedSessionId, targetRuleRef) — collapses real write-time duplicates within one session only; a gap recurring across separate sessions stays a distinct occurrence.
 export async function getRankedProposalGroups(deps: FindingsDeps = {}): Promise<ProposalGroup[]> {
 	const prisma = deps.prisma ?? prismaClient;
 	const proposals = await prisma.ruleProposal.findMany({ orderBy: { createdAt: 'desc' } });

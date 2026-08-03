@@ -8,9 +8,7 @@ import { computeSessionStats } from '../stats/index.js';
 import { createAuditRun } from './ledger.js';
 import { runJudgmentPipelineForSession } from './pipeline.js';
 
-// Not named inspect.ts — every existing inspect.ts is read-only by convention; this one spends
-// real Sonnet tokens and writes to the DB. Run manually via tsx, same as the inspect.ts files —
-// there is no HTTP route to drive this yet (that's step 8).
+// Not inspect.ts — every inspect.ts is read-only by convention; this one spends real Sonnet tokens and writes to the DB. Run manually via tsx, no HTTP route yet.
 async function main(): Promise<void> {
 	const [slug, sessionId] = process.argv.slice(2);
 	if (!slug) {

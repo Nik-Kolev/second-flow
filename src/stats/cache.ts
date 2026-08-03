@@ -9,9 +9,7 @@ export function computeCacheRatioSeries(timeline: TimelineEvent[]): CacheRatioPo
 	return turns.map((turn, turnIndex) => {
 		const inputTokens = turn.usage.inputTokens;
 		const cacheReadInputTokens = turn.usage.cacheReadInputTokens ?? 0;
-		// input_tokens is only the non-cached remainder, not the whole turn — a heavily-cached turn
-		// can have input_tokens near 0 while cacheReadInputTokens is huge, so the ratio's denominator
-		// has to be the turn's whole context (same total context-budget.ts computes), not inputTokens.
+		// Denominator must be total context, not input_tokens alone (near-0 on heavily-cached turns).
 		const totalContextTokens = turnContextTokens(turn.usage);
 		return {
 			turnIndex,

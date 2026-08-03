@@ -1,7 +1,6 @@
 import type { HookRuleBlock, HookSuccessAttachment, RuleBlock } from './types.js';
 
-// `content`/`stdout` here already passed through classify.ts's scrubDeep() before bucketing —
-// re-scrubbing would be dead work, so this module deliberately does not call scrubText again.
+// content/stdout already passed through classify.ts's scrubDeep() — re-scrubbing here would be dead work.
 export function extractHookRuleBlocks(hookSuccess: HookSuccessAttachment[]): RuleBlock[] {
 	const blocks: RuleBlock[] = [];
 

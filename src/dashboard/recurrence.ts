@@ -6,15 +6,7 @@ export type RecurrenceMarker =
 	| { kind: 'recurred'; laterAuditCount: number; recurredInCount: number }
 	| { kind: 'notSeenSince'; laterAuditCount: number };
 
-// Provable-only marker semantics: "recurred" and "not seen since N later audits" are both
-// statements about what later judgment passes actually reported — never an unprovable "fixed".
-// Three deliberate exclusions keep the claims honest:
-// - only status-completed later audits count (wavedThrough/errored/skippedCeiling never ran a
-//   judgment pass, so their silence proves nothing),
-// - later audits of the same transcript are excluded (the same session re-analyzed showing the
-//   same problem is not a new occurrence of the mistake),
-// - notes with a null ruleRef (pre-field legacy rows) get no marker at all.
-// Proposals need no util here — their marker is RuleProposal.status, set by reconciliation.
+// Provable-only markers, never an unprovable "fixed" — only completed later audits count, same-transcript re-audits are excluded, and null-ruleRef notes get no marker; proposals use RuleProposal.status instead.
 export async function getNoteRecurrenceForSession(
 	auditedSessionId: string,
 	deps: FindingsDeps = {},
@@ -35,8 +27,7 @@ export async function getNoteRecurrenceForSession(
 		return {};
 	}
 
-	// No explicit project scoping: a ruleRef is a file source string, so a global CLAUDE.md ref
-	// matches across projects naturally while per-project file paths only ever match themselves.
+	// No project scoping — a global CLAUDE.md ref matches across projects naturally; per-project paths only ever match themselves.
 	const laterAudits = await prisma.auditedSession.findMany({
 		where: {
 			status: AuditedSessionStatus.completed,
@@ -49,16 +40,30 @@ export async function getNoteRecurrenceForSession(
 	const laterAuditIds = laterAudits.map((audit) => audit.id);
 
 	const result: Record<string, RecurrenceMarker> = {};
-	for (const ruleRef of ruleRefs) {
-		if (laterAuditCount === 0) {
+	if (laterAuditCount === 0) {
+		for (const ruleRef of ruleRefs) {
 			result[ruleRef] = { kind: 'notSeenSince', laterAuditCount: 0 };
+		}
+		return result;
+	}
+
+	// One query for every ruleRef instead of one per ruleRef, then group in JS.
+	const laterNotes = await prisma.analysisNote.findMany({
+		where: { ruleRef: { in: ruleRefs }, auditedSessionId: { in: laterAuditIds } },
+		select: { ruleRef: true, auditedSessionId: true },
+	});
+	const recurredSessionIdsByRuleRef = new Map<string, Set<string>>();
+	for (const note of laterNotes) {
+		if (note.ruleRef === null) {
 			continue;
 		}
-		const laterNotes = await prisma.analysisNote.findMany({
-			where: { ruleRef, auditedSessionId: { in: laterAuditIds } },
-			select: { auditedSessionId: true },
-		});
-		const recurredInCount = new Set(laterNotes.map((note) => note.auditedSessionId)).size;
+		const sessionIds = recurredSessionIdsByRuleRef.get(note.ruleRef) ?? new Set<string>();
+		sessionIds.add(note.auditedSessionId);
+		recurredSessionIdsByRuleRef.set(note.ruleRef, sessionIds);
+	}
+
+	for (const ruleRef of ruleRefs) {
+		const recurredInCount = recurredSessionIdsByRuleRef.get(ruleRef)?.size ?? 0;
 		result[ruleRef] =
 			recurredInCount > 0
 				? { kind: 'recurred', laterAuditCount, recurredInCount }

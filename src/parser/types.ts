@@ -1,6 +1,4 @@
-// Raw (on-disk) JSONL record shapes — loosely typed, only fields this parser actually reads.
-// Claude Code's transcript format evolves across versions, so every raw type below keeps an
-// open index signature rather than a closed interface.
+// Raw JSONL record shapes, loosely typed — every raw type keeps an open index signature since the format evolves across versions.
 
 export interface RawUsage {
 	input_tokens: number;
@@ -71,9 +69,7 @@ export interface RawAttachmentRecord {
 	[key: string]: unknown;
 }
 
-// ---------------------------------------------------------------------------
 // Output shapes — what this module hands back to callers.
-// ---------------------------------------------------------------------------
 
 export interface UsageInfo {
 	inputTokens: number;

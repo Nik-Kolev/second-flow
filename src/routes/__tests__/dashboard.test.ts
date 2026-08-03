@@ -63,7 +63,6 @@ test('GET /api/dashboard serves stats and settings, with the legacy keys gone', 
 			totalSpendUsd: number;
 			sessionsAudited: number;
 			openProposalCount: number;
-			noteCount: number;
 			droppedProposalTotal: number;
 		};
 		settings: {

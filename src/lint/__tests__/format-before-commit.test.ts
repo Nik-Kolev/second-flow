@@ -69,6 +69,15 @@ test('a format command run via PowerShell also counts', () => {
 	assert.deepEqual(checkFormatBeforeCommit(timeline), []);
 });
 
+test('a commit run via PowerShell with no preceding format command is caught too, not just Bash', () => {
+	const timeline = [makeCall('a', 'git commit -m "x"', { toolName: 'PowerShell' })];
+
+	const findings = checkFormatBeforeCommit(timeline);
+
+	assert.equal(findings.length, 1);
+	assert.equal(findings[0].toolUseId, 'a');
+});
+
 test('--fix alone counts as a format action', () => {
 	const timeline = [makeCall('a', 'eslint . --fix'), makeCall('b', 'git commit -m "x"')];
 

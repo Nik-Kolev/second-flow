@@ -1,12 +1,12 @@
 import { promises as fs } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { TimelineEvent } from '../parser/index.js';
 import { scrubText } from '../parser/index.js';
 import { resolveGlobalMemoryDir, resolveProjectMemoryDir, resolveStackDir } from './locate.js';
 import type { MemoryRuleBlock, RulebookDiscoveryOptions } from './types.js';
 
-// Mirrors extractShellCommand's guard (src/stats/boundaries.ts) — input is `unknown` on every
-// ToolCallEvent, so the typeof/null check must come before the cast, not after.
+// Mirrors extractShellCommand's guard — the typeof/null check must come before the cast, not after.
 function extractFilePath(input: unknown): string | undefined {
 	if (typeof input !== 'object' || input === null) {
 		return undefined;
@@ -21,10 +21,11 @@ export interface ReadPaths {
 	stack: Set<string>;
 }
 
-// Deliberately Read-only, not Grep/Glob — only a full Read actually puts a file's content into
-// context; a Grep match snippet doesn't mean the file was seen. Relative file_path values are
-// skipped: Claude Code's own Read tool always uses absolute paths, so a relative one can't be
-// reliably matched against the resolved directories and signals unexpected data, not a real file.
+// Windows paths are case-insensitive, but a transcript's recorded casing can differ from os.homedir()'s — fold both sides before comparing, or a real read gets missed.
+const foldPathForComparison =
+	os.platform() === 'win32' ? (p: string) => p.toLowerCase() : (p: string) => p;
+
+// Read-only, not Grep/Glob — only a Read puts content into context. Relative file_path is skipped since Claude Code's Read tool always uses absolute paths.
 export function extractReadPaths(
 	timeline: TimelineEvent[],
 	cwd: string,
@@ -50,11 +51,12 @@ export function extractReadPaths(
 			continue;
 		}
 		const normalized = path.normalize(filePath);
-		if (normalized.startsWith(dirs.globalMemory + path.sep)) {
+		const folded = foldPathForComparison(normalized);
+		if (folded.startsWith(foldPathForComparison(dirs.globalMemory) + path.sep)) {
 			paths.globalMemory.add(normalized);
-		} else if (normalized.startsWith(dirs.projectMemory + path.sep)) {
+		} else if (folded.startsWith(foldPathForComparison(dirs.projectMemory) + path.sep)) {
 			paths.projectMemory.add(normalized);
-		} else if (normalized.startsWith(dirs.stack + path.sep)) {
+		} else if (folded.startsWith(foldPathForComparison(dirs.stack) + path.sep)) {
 			paths.stack.add(normalized);
 		}
 	}
@@ -88,9 +90,7 @@ export interface MemoryDiscoveryResult {
 	count: number;
 }
 
-// Scope (which files) comes from the session's own transcript; content always comes from disk as
-// of right now — never frozen to what the session originally saw, matching how CLAUDE.md already
-// behaves, so every audit measures against the same live standard regardless of when it runs.
+// Scope comes from the transcript; content is always re-read live from disk, same as CLAUDE.md, never frozen to what the session originally saw.
 export async function discoverMemoryRulebook(
 	timeline: TimelineEvent[],
 	cwd: string,

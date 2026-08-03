@@ -17,20 +17,13 @@ export interface JudgmentPipelineInput {
 	stats: SessionStats;
 	lintFindings: LintFinding[];
 	rulebook: RulebookResolution;
-	// Transcript file stat taken by the caller before parsing — persisted on the AuditedSession row
-	// so a later size/mtime mismatch can flag "changed since audit". Optional: the CLI path doesn't
-	// stat, and rows created without it just can't be change-checked (null columns).
+	// Persisted so a later size/mtime mismatch can flag "changed since audit" — optional since the CLI path doesn't stat.
 	transcriptFileStat?: { size: number; mtime: Date };
 }
 
 export type PipelineExecDeps = JudgmentDeps & CeilingDeps;
 
-// Sum of input+output+cacheRead+cacheCreation tokens across every assistant turn — unlike
-// context-budget.ts's turnContextTokens (which reads the latest turn only, since each turn's
-// usage already reflects the whole resent conversation for context-window purposes), this is a
-// real cost-style sum: every turn is a separately billed API call, so summing across turns is the
-// correct operation here, not double-counting. Exported for the audit route's wavedThrough rows,
-// which are created outside this module but must record the same total.
+// Sums every turn, not just the latest (unlike context-budget.ts's turnContextTokens) since each turn is separately billed; also used by the audit route's wavedThrough rows.
 export function sumTranscriptTokens(timeline: TimelineEvent[]): number {
 	let total = 0;
 	for (const event of timeline) {
@@ -60,8 +53,7 @@ export type JudgmentPipelineOutcome =
 	  }
 	| { outcome: 'errored'; auditedSessionId: string; usageLogged: boolean };
 
-// Free, no DB/LLM. Returns null when Pass 1's gate finds nothing worth a Sonnet call — a waved-
-// through session costs nothing and produces nothing, so it never reaches the DB at all.
+// Free, no DB/LLM. Returns null when Pass 1's gate finds nothing worth a Sonnet call — a wavedThrough session never reaches the DB at all.
 export function checkGateAndBuildEvidence(
 	input: JudgmentPipelineInput,
 ): { triggers: GateTrigger[]; evidenceWindow: TimelineEvent[] } | null {
@@ -76,9 +68,7 @@ export function checkGateAndBuildEvidence(
 	return { triggers, evidenceWindow: extractEvidenceWindow(input.session.timeline, spans) };
 }
 
-// Assumes the gate already triggered and confirmation already happened (or wasn't needed) —
-// callers loop sequentially, never Promise.all, so an in-flight call is always allowed to finish
-// before the next session's ceiling check runs.
+// Assumes the gate already triggered and confirmation already happened — callers loop sequentially, never Promise.all.
 export async function executeJudgmentForSession(
 	input: JudgmentPipelineInput,
 	auditRunId: string,
@@ -106,9 +96,7 @@ export async function executeJudgmentForSession(
 		return { outcome: 'skippedCeiling', auditedSessionId: auditedSession.id };
 	}
 
-	// Created optimistically as `completed`, then corrected to `errored` below if the Sonnet call
-	// fails — creating the row first means even a crash mid-call leaves a visible record that Pass 2
-	// was attempted for this session.
+	// Created optimistically as `completed`, corrected to `errored` below on failure — so even a mid-call crash leaves a visible record.
 	const auditedSession = await prisma.auditedSession.create({
 		data: {
 			transcriptSessionId: input.session.sessionId,
@@ -165,10 +153,7 @@ export async function executeJudgmentForSession(
 	};
 }
 
-// Thin convenience wrapper for exactly one session, confirming once for that one session. A
-// future multi-session batch runner (step 8) should call checkGateAndBuildEvidence across all
-// its sessions up front, confirm once with the aggregate count, then call
-// executeJudgmentForSession directly per session — not reuse this wrapper in a loop.
+// Thin convenience wrapper for exactly one session — a future batch runner should call executeJudgmentForSession directly per session, not reuse this in a loop.
 export async function runJudgmentPipelineForSession(
 	input: JudgmentPipelineInput,
 	auditRunId: string,

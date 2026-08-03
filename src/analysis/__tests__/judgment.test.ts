@@ -234,6 +234,35 @@ test('flagged signals (e.g. a rate-limit hit not visible in the evidence text) r
 	assert.ok(requestParams.messages[0].content.includes(signal));
 });
 
+test("a tool call's result reaches the prompt, not just its input", async () => {
+	const fake = makeFakeAnthropic(wellFormedInput());
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+	const evidenceWindow: TimelineEvent[] = [
+		{
+			kind: 'tool-call',
+			toolUseId: 'a',
+			toolName: 'Bash',
+			input: { command: 'npm test' },
+			callerUuid: 'u1',
+			callTimestamp: 't',
+			isSubagentSpawn: false,
+			isBackground: false,
+			result: { kind: 'sync', text: '3 tests failed' },
+		},
+	];
+
+	await runJudgmentCall(auditRun.id, makeRulebook(), evidenceWindow, [], {
+		prisma: testPrisma,
+		anthropic: fake.client,
+	});
+
+	const requestParams = fake.lastParams() as { messages: Array<{ content: string }> };
+	assert.ok(
+		requestParams.messages[0].content.includes('3 tests failed'),
+		'a failing command must be distinguishable from a passing one in the evidence text',
+	);
+});
+
 test('an empty flaggedSignals list produces no "Flagged signals" section', async () => {
 	const fake = makeFakeAnthropic(wellFormedInput());
 	const auditRun = await testPrisma.auditRun.create({ data: {} });
@@ -280,6 +309,62 @@ test("a rule-rewrite proposal citing a targetRuleRef outside the rulebook's file
 		outcome.droppedProposalCount,
 		1,
 		'a silently-filtered proposal must be counted, never invisible',
+	);
+});
+
+test('a rule-rewrite proposal with degenerate placeholder evidence is dropped', async () => {
+	const input = wellFormedInput();
+	input.ruleRewriteProposals = [
+		...(input.ruleRewriteProposals as unknown[]),
+		{
+			targetRuleRef: 'CLAUDE.md',
+			targetTextSnapshot: 'Always label shell commands.',
+			proposedText: 'Always label shell commands with RUNNING:.',
+			evidence: 'placeholder',
+		},
+	];
+	const fake = makeFakeAnthropic(input);
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+
+	const outcome = await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), [], {
+		prisma: testPrisma,
+		anthropic: fake.client,
+	});
+
+	assert.equal(outcome.outcome, 'completed');
+	if (outcome.outcome !== 'completed') {
+		return;
+	}
+	assert.equal(
+		outcome.findings.ruleRewriteProposals.length,
+		1,
+		'only the proposal with real evidence should survive',
+	);
+	assert.equal(outcome.droppedProposalCount, 1);
+});
+
+test('a compliance note with degenerate placeholder evidence is dropped', async () => {
+	const input = wellFormedInput();
+	input.complianceNotes = [
+		...(input.complianceNotes as unknown[]),
+		{ evidence: 'n/a', ruleRef: 'CLAUDE.md', outcome: 'positive' },
+	];
+	const fake = makeFakeAnthropic(input);
+	const auditRun = await testPrisma.auditRun.create({ data: {} });
+
+	const outcome = await runJudgmentCall(auditRun.id, makeRulebook(), makeEvidenceWindow(), [], {
+		prisma: testPrisma,
+		anthropic: fake.client,
+	});
+
+	assert.equal(outcome.outcome, 'completed');
+	if (outcome.outcome !== 'completed') {
+		return;
+	}
+	assert.equal(
+		outcome.findings.complianceNotes.length,
+		1,
+		'only the note with real evidence should survive',
 	);
 });
 

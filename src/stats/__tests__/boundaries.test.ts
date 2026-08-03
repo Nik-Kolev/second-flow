@@ -17,6 +17,20 @@ function makeBashCall(command: string, toolUseId = 'toolu_bash'): ToolCallEvent 
 	};
 }
 
+function makePowerShellCall(command: string, toolUseId = 'toolu_ps'): ToolCallEvent {
+	return {
+		kind: 'tool-call',
+		toolUseId,
+		toolName: 'PowerShell',
+		input: { command },
+		callerUuid: 'u1',
+		callTimestamp: 't1',
+		isSubagentSpawn: false,
+		isBackground: false,
+		result: { kind: 'sync', text: 'ok' },
+	};
+}
+
 function makeAgentCall(overrides: Partial<ToolCallEvent> = {}): ToolCallEvent {
 	return {
 		kind: 'tool-call',
@@ -44,6 +58,15 @@ test('git commit, git push, and gh pr create are each matched', () => {
 	assert.equal(candidates.filter((c) => c.kind === 'git-commit').length, 1);
 	assert.equal(candidates.filter((c) => c.kind === 'git-push').length, 1);
 	assert.equal(candidates.filter((c) => c.kind === 'gh-pr-create').length, 1);
+});
+
+test('git commit run via PowerShell is matched too, not just Bash', () => {
+	const timeline = [makePowerShellCall('git commit -m "msg"')];
+
+	const candidates = detectBoundaryCandidates(timeline);
+
+	assert.equal(candidates.length, 1);
+	assert.equal(candidates[0].kind, 'git-commit');
 });
 
 test('an unrelated Bash command produces no candidates', () => {

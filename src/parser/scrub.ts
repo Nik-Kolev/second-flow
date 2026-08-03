@@ -1,5 +1,4 @@
-// Best-effort secret scrubbing — a small pattern set, not a guarantee. Transcripts can contain
-// pasted credentials even though the tool's own output never shows raw secrets.
+// Best-effort secret scrubbing (small pattern set, not a guarantee) — transcripts can contain pasted credentials.
 
 interface SecretPattern {
 	pattern: RegExp;

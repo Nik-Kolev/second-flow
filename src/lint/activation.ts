@@ -28,20 +28,12 @@ export interface ActivationDeps {
 	anthropic?: ActivationAnthropicClient;
 }
 
-// Memory/stack blocks are scoped per-session (different sessions Read different files), so their
-// text must never enter this hash or the prompt below — folding session-specific content in would
-// mean almost no two sessions ever share a cache key, defeating the entire point of the
-// CheckerActivation cache (one cached Haiku call per distinct *always-active* rulebook). Both
-// functions apply the identical filter so the hashed set and the actual prompt content never drift.
+// Memory blocks are session-scoped — must be excluded from both hash and prompt or the cache never hits.
 function activationScopedBlocks(rulebook: RulebookResolution): RulebookResolution['blocks'] {
 	return rulebook.blocks.filter((block) => block.origin !== 'memory');
 }
 
-// Block order from resolveRulebook (src/rulebook/index.ts) is fixed (global, then
-// project, then hook, then environmental), so the same rulebook always hashes the
-// same way. JSON-encoding the block texts (rather than joining them on a fixed
-// separator) means two different block sets can never hash identically just
-// because one block's text happens to contain the separator.
+// JSON-encoding (not a joined string) means two different block sets can't hash identically just because a block's text contains the separator.
 function hashRulebook(rulebook: RulebookResolution): string {
 	const blockTexts = activationScopedBlocks(rulebook).map((block) => block.text);
 	const encoded = JSON.stringify(blockTexts);
@@ -69,8 +61,7 @@ function buildPrompt(rulebook: RulebookResolution): string {
 	].join('\n');
 }
 
-// External-API boundary: a silently malformed response here would mean a checker
-// silently stops running, the false-negative failure mode this layer exists to prevent.
+// Malformed input must throw, not silently disable a checker.
 function parseActivationInput(input: unknown): Record<string, boolean> {
 	if (typeof input !== 'object' || input === null) {
 		throw new Error('Activation classification returned a non-object tool input');
@@ -120,9 +111,7 @@ async function classifyRulebook(
 		messages: [{ role: 'user', content: buildPrompt(rulebook) }],
 	});
 
-	// Real tokens were spent regardless of whether the content below parses — log the spend before
-	// interpreting the response, same ordering as judgment.ts/ledger.ts. auditRunId is null because
-	// activation happens on first sight of a rulebook, outside any audit run.
+	// Log spend before parsing (tokens spent either way); auditRunId is null since activation runs outside any audit run.
 	await prisma.auditRunCall.create({
 		data: {
 			auditRunId: null,
@@ -144,12 +133,7 @@ async function classifyRulebook(
 	return parseActivationInput(toolUseBlock.input);
 }
 
-// Keyed by rulebookHash. The check-and-set on this map happens synchronously, before
-// any `await` in getActivationMap — the only place JS guarantees two concurrent calls
-// can't both pass the check before either has published its promise. Deduping only at
-// the classify step (after each call's own DB read) doesn't work: both calls can issue
-// independent findMany queries and reach the classify branch before either has claimed
-// the map entry, since a Prisma query is several internal await hops, not one.
+// Check-and-set must be synchronous, pre-await — Prisma reads span awaits, so two concurrent calls can both miss the cache.
 const inFlightResolutions = new Map<string, Promise<Record<string, boolean>>>();
 
 async function resolveActivationMap(
@@ -160,10 +144,7 @@ async function resolveActivationMap(
 	const prisma = deps.prisma ?? prismaClient;
 	const anthropic = deps.anthropic ?? anthropicClient;
 
-	// A count match alone isn't enough: if a checker were ever renamed, a stale row
-	// under the old id could keep the count equal to CHECKERS.length while a current
-	// checker's id is silently missing from the map. Every cached row's id must also
-	// belong to the current checker set.
+	// Row count alone can't detect a renamed checker id — every row's id must also be current.
 	const currentCheckerIds = new Set(CHECKERS.map((checker) => checker.id));
 	const cachedRows = await prisma.checkerActivation.findMany({ where: { rulebookHash } });
 	const cacheIsComplete =
@@ -179,6 +160,11 @@ async function resolveActivationMap(
 	}
 
 	const activationMap = await classifyRulebook(rulebook, anthropic, prisma);
+
+	// Without this, an orphaned row keeps cacheIsComplete false forever, re-hitting Haiku every call.
+	await prisma.checkerActivation.deleteMany({
+		where: { rulebookHash, checkerId: { notIn: [...currentCheckerIds] } },
+	});
 
 	await Promise.all(
 		CHECKERS.map((checker) =>

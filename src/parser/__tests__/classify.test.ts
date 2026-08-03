@@ -276,6 +276,25 @@ test('an unrecognized attachment type is kept in the unknown bucket, not silentl
 	assert.equal(session.noise.byType['attachment:brand_new_thing'], 1);
 });
 
+test('a stored attachment record never carries the raw attachment.type field', async () => {
+	const lines = [
+		line({
+			type: 'attachment',
+			attachment: { type: 'hook_success', hookName: 'SessionStart', stdout: 'loaded' },
+			uuid: 'a1',
+			timestamp: 't',
+		}),
+	];
+
+	const session = await parseRecords(lines, context);
+
+	assert.equal(session.attachments.hookSuccess.length, 1);
+	assert.ok(
+		!('type' in session.attachments.hookSuccess[0]),
+		'the raw attachment.type field must not leak onto the typed, stored record',
+	);
+});
+
 test('an unrecognized top-level record type is counted as noise, never throws', async () => {
 	const lines = [line({ type: 'totally-new-record-type', foo: 'bar' })];
 

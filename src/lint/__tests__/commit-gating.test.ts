@@ -22,6 +22,20 @@ function makeCommitCall(toolUseId: string, command = 'git commit -m "x"'): ToolC
 	};
 }
 
+function makePowerShellCommitCall(toolUseId: string, command = 'git commit -m "x"'): ToolCallEvent {
+	return {
+		kind: 'tool-call',
+		toolUseId,
+		toolName: 'PowerShell',
+		input: { command },
+		callerUuid: 'u1',
+		callTimestamp: 't',
+		isSubagentSpawn: false,
+		isBackground: false,
+		result: { kind: 'sync', text: 'ok' },
+	};
+}
+
 function makeUserMessage(text = 'commit'): UserMessageEvent {
 	return { kind: 'user-message', text };
 }
@@ -88,6 +102,15 @@ test('two approved commits in a row are both fine', () => {
 	];
 
 	assert.deepEqual(checkCommitGating(timeline), []);
+});
+
+test('a commit run via PowerShell with no preceding user turn is caught too, not just Bash', () => {
+	const timeline = [makePowerShellCommitCall('a')];
+
+	const findings = checkCommitGating(timeline);
+
+	assert.equal(findings.length, 1);
+	assert.equal(findings[0].toolUseId, 'a');
 });
 
 test('a timeline with no commits produces no findings', () => {
