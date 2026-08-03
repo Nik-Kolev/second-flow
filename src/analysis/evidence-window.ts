@@ -9,9 +9,7 @@ export interface EvidenceSpan {
 	end: number;
 }
 
-// Fixed-radius heuristic, not an agentic "Sonnet asks for more context" loop — every other LLM
-// call in this project is single-shot, and letting Sonnet request more context would make the
-// per-session call count unbounded, undermining the spend ceiling this step also builds.
+// Fixed-radius, not an agentic "ask for more context" loop — keeps the per-session call count bounded for the spend ceiling.
 export function buildEvidenceSpans(
 	timelineLength: number,
 	triggerIndices: number[],
@@ -44,8 +42,7 @@ export function buildEvidenceSpans(
 	return merged;
 }
 
-// Spans are pre-merged/sorted/non-overlapping by construction (buildEvidenceSpans), so this
-// can't produce duplicate events across spans.
+// Spans are pre-merged/sorted/non-overlapping by construction, so this can't produce duplicate events.
 export function extractEvidenceWindow(
 	timeline: TimelineEvent[],
 	spans: EvidenceSpan[],

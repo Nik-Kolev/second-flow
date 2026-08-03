@@ -7,6 +7,9 @@ const GIT_COMMIT = /\bgit\s+commit\b/i;
 const GIT_PUSH = /\bgit\s+push\b/i;
 const GH_PR_CREATE = /\bgh\s+pr\s+create\b/i;
 
+// Single source of truth — also imported by lint/shell-command-label.ts and lint/format-before-commit.ts.
+export const SHELL_TOOL_NAMES = new Set(['Bash', 'PowerShell']);
+
 // Shared by any tool whose input is `{ command: string }` — currently Bash and PowerShell.
 export function extractShellCommand(input: unknown): string | undefined {
 	if (typeof input !== 'object' || input === null) {
@@ -16,8 +19,8 @@ export function extractShellCommand(input: unknown): string | undefined {
 	return typeof value === 'string' ? value : undefined;
 }
 
-function bashBoundaryCandidates(call: ToolCallEvent): BoundaryCandidate[] {
-	if (call.toolName !== 'Bash') {
+function shellBoundaryCandidates(call: ToolCallEvent): BoundaryCandidate[] {
+	if (!SHELL_TOOL_NAMES.has(call.toolName)) {
 		return [];
 	}
 	const command = extractShellCommand(call.input);
@@ -79,7 +82,7 @@ export function detectBoundaryCandidates(timeline: TimelineEvent[]): BoundaryCan
 	const calls = timeline.filter((event): event is ToolCallEvent => event.kind === 'tool-call');
 	const candidates: BoundaryCandidate[] = [];
 	for (const call of calls) {
-		candidates.push(...bashBoundaryCandidates(call));
+		candidates.push(...shellBoundaryCandidates(call));
 		const completion = subagentCompletionCandidate(call);
 		if (completion) {
 			candidates.push(completion);

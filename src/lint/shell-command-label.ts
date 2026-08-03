@@ -1,8 +1,7 @@
 import type { AssistantTurnEvent, TimelineEvent } from '../parser/index.js';
-import { extractShellCommand } from '../stats/index.js';
+import { extractShellCommand, SHELL_TOOL_NAMES } from '../stats/index.js';
 import type { LintFinding } from './types.js';
 
-const SHELL_TOOL_NAMES = new Set(['Bash', 'PowerShell']);
 const RUNNING_LABEL = /^RUNNING:/m;
 
 function isLabeled(turn: AssistantTurnEvent | undefined, toolUseId: string): boolean {
@@ -15,9 +14,7 @@ function isLabeled(turn: AssistantTurnEvent | undefined, toolUseId: string): boo
 	return RUNNING_LABEL.test((preceding as { type: 'text'; text: string }).text);
 }
 
-// Checks the user's own global rule: every shell tool call needs a one-line `RUNNING:` label
-// in the immediately preceding text block of the same turn — not just anywhere earlier in it,
-// since a turn can chain several shell calls that each need their own label.
+// Requires a RUNNING: label immediately before each shell call, per-call not per-turn.
 export function checkShellCommandLabel(timeline: TimelineEvent[]): LintFinding[] {
 	const turnByUuid = new Map<string, AssistantTurnEvent>();
 	for (const event of timeline) {

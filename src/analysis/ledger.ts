@@ -41,15 +41,10 @@ type ReconciliationOutcome =
 	| { kind: 'resolved' }
 	| { kind: 'stillProposed' }
 	| { kind: 'needsConfirm' }
-	// usageLogged distinguishes a call that was actually billed (parse failure after a real
-	// response came back) from one that never completed (network/call failure, nothing billed) —
-	// haikuCallsMade below must only count the former.
+	// usageLogged distinguishes a billed call (parse failure after a real response) from one that never completed — haikuCallsMade only counts the former.
 	| { kind: 'errored'; usageLogged: boolean };
 
-// Mirrors src/rulebook/discover.ts's read-or-null convention: a missing/unreadable target file is
-// an expected steady-state case here (the rule file may have been deleted or restructured since
-// the proposal was made), not an error — the caller maps a null read to `needsConfirm` rather
-// than crashing the whole reconciliation pass over one bad proposal.
+// A missing/unreadable target file is expected steady-state (deleted/restructured since proposed), not an error — the caller maps a null read to `needsConfirm`.
 async function readCurrentFileText(filePath: string): Promise<string | null> {
 	try {
 		return await fs.readFile(filePath, 'utf-8');
@@ -111,9 +106,7 @@ async function callReconciliationModel(
 	});
 }
 
-// External-API boundary, same failure-mode reasoning as src/lint/activation.ts: a silently
-// malformed response here must not be treated as a default answer either way — a wrong guess
-// would either falsely resolve a real gap or falsely keep chasing one that's already fixed.
+// A silently malformed response must not default either way — a wrong guess falsely resolves a real gap or falsely keeps chasing a fixed one.
 function extractAddressedVerdict(response: Anthropic.Message): boolean {
 	const toolUseBlock = response.content.find(
 		(block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
@@ -160,9 +153,7 @@ async function reconcileOneProposal(
 	try {
 		currentText = await readCurrentFileText(proposal.targetRuleRef);
 	} catch {
-		// An unexpected fs error (EACCES, EISDIR, ...) on this one proposal's target file — same
-		// isolation philosophy as the Haiku-call failures below: it must not abort reconciliation
-		// of every other unrelated proposal in this batch.
+		// An unexpected fs error on this one proposal's target file must not abort reconciliation of the rest of the batch.
 		return { kind: 'errored', usageLogged: false };
 	}
 
@@ -174,10 +165,8 @@ async function reconcileOneProposal(
 		return { kind: 'needsConfirm' };
 	}
 
-	// An empty snapshot can never meaningfully be "still present" — guard against
-	// String.includes('') always vacuously matching and falsely reporting a no-op.
+	// Excludes '' — String.includes('') always vacuously matches, which would falsely report a no-op.
 	if (proposal.targetTextSnapshot !== '' && currentText.includes(proposal.targetTextSnapshot)) {
-		// Rule hasn't moved. Zero-cost no-op — leave status as 'proposed', no DB write, no LLM call.
 		return { kind: 'noOp' };
 	}
 
@@ -185,13 +174,11 @@ async function reconcileOneProposal(
 	try {
 		response = await callReconciliationModel(proposal, currentText, anthropic);
 	} catch {
-		// The call itself never completed — no usage was ever billed, nothing to log. One flaky
-		// call must not abort reconciliation of every other unrelated proposal in this batch.
+		// The call never completed, nothing billed — must not abort reconciliation of the rest of the batch.
 		return { kind: 'errored', usageLogged: false };
 	}
 
-	// The call succeeded and real tokens were spent, regardless of whether the response content
-	// below parses cleanly — log the spend before attempting to interpret the verdict.
+	// Log the spend before interpreting the verdict — tokens were billed regardless of parse outcome.
 	await logAuditRunCall(auditRunId, response.usage, prisma);
 
 	let addressed: boolean;
@@ -218,9 +205,7 @@ export async function createAuditRun(deps: LedgerDeps = {}): Promise<AuditRun> {
 	return prisma.auditRun.create({ data: {} });
 }
 
-// Server-startup entrypoint: null means the free fast path (zero outstanding proposals — one
-// COUNT query, no AuditRun created, no LLM calls possible). Only a non-empty ledger creates a run,
-// and even then ledger.ts only spends Haiku tokens on proposals whose flagged wording moved.
+// Server-startup entrypoint: null means the free fast path — zero outstanding proposals, one COUNT query, no AuditRun created.
 export async function runStartupReconciliation(
 	deps: LedgerDeps = {},
 ): Promise<ReconciliationSummary | null> {
@@ -253,11 +238,7 @@ export async function reconcileProposals(
 		where: { status: RuleProposalStatus.proposed },
 	});
 
-	// Sequential, not Promise.all: this is an infrequent, human-triggered pass, not a hot path,
-	// and sequential processing avoids SQLite write contention for no real throughput cost. Each
-	// proposal is independent (no shared cache key like activation.ts's rulebook hash), so there's
-	// no in-flight-Map dedup here either — see the design notes in the plan for why that pattern
-	// doesn't transfer to a list of independent rows.
+	// Sequential, not Promise.all — avoids SQLite write contention on this low-frequency pass.
 	const outcomes: ReconciliationOutcome[] = [];
 	for (const proposal of proposals) {
 		outcomes.push(await reconcileOneProposal(proposal, auditRunId, prisma, anthropic));
@@ -274,9 +255,7 @@ export async function reconcileProposals(
 	};
 	for (const outcome of outcomes) {
 		summary[outcome.kind]++;
-		// Only count calls that actually completed and were billed — resolved/stillProposed are
-		// only reachable after a successful, logged call; an errored outcome is only billed if
-		// usageLogged is true (a network/call failure never returned a response to bill for).
+		// Only count calls that actually completed and were billed — resolved/stillProposed always were; an errored outcome only if usageLogged.
 		if (
 			outcome.kind === 'resolved' ||
 			outcome.kind === 'stillProposed' ||

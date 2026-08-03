@@ -2,11 +2,7 @@ import type { TimelineEvent } from '../parser/index.js';
 import { detectBoundaryCandidates, extractShellCommand } from '../stats/index.js';
 import type { LintFinding } from './types.js';
 
-// Mechanical proxy for "no preceding approval turn": a commit with zero user turns (plain
-// messages or slash commands) since the previous commit is provably impossible to have been
-// approved — the assistant never yielded back to the user in between. A user turn that *isn't*
-// real approval (an unrelated question, say) is a fuzzier case this deterministic layer can't
-// tell apart — that's Layer 2's (Sonnet judgment pass) job, not this checker's.
+// Proxy for "no approval": zero user turns since the last commit — fuzzier cases are Layer 2's job.
 export function checkCommitGating(timeline: TimelineEvent[]): LintFinding[] {
 	const commitToolUseIds = new Set(
 		detectBoundaryCandidates(timeline)

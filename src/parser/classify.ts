@@ -17,10 +17,7 @@ import type {
 	UserMessageEvent,
 } from './types.js';
 
-// Pure session-state bookkeeping — no conversational or rulebook content, always discarded.
-// `queue-operation` is included here: its enqueue/dequeue pair only ever duplicates timing
-// around a real event that also arrives as a `user`/`assistant` record (verified against real
-// transcripts), so its content never needs inspecting.
+// Pure session-state bookkeeping, always discarded — queue-operation's pair only duplicates timing already visible on a user/assistant record.
 const NOISE_TYPES = new Set([
 	'last-prompt',
 	'mode',
@@ -73,7 +70,7 @@ function handleAttachment(
 	noise: NoiseFn,
 ): void {
 	const { attachment, uuid, timestamp } = record;
-	const scrubbed = scrubDeep(attachment) as Record<string, unknown>;
+	const { type: _type, ...scrubbed } = scrubDeep(attachment) as Record<string, unknown>;
 	const base = { ...scrubbed, uuid, timestamp };
 
 	switch (attachment.type) {
@@ -116,9 +113,7 @@ function handleAssistantRecord(
 ): AssistantTurnEvent {
 	const { message, uuid, timestamp, effort, error, isApiErrorMessage, apiErrorStatus } = record;
 
-	// A single logical API response is persisted as several consecutive `assistant` lines (one
-	// content block each), sharing one `message.id` and repeating the same `usage` object — group
-	// them into one turn instead of triple-counting tokens.
+	// Several consecutive assistant lines share one message.id and repeat usage — group into one turn, don't triple-count tokens.
 	let turn = pendingAssistantTurn;
 	if (!turn || turn.messageId !== message.id) {
 		turn = {
@@ -217,8 +212,7 @@ function applyTaskNotification(
 		noise('task-notification:orphan');
 		return;
 	}
-	// The note embedded in real task-notifications states a resumed background agent can notify
-	// more than once for the same tool-use-id — tolerate repeats, last write wins.
+	// A resumed background agent can notify more than once for the same tool-use-id — tolerate repeats, last write wins.
 	pending.result = {
 		kind: 'async-task-notification',
 		timestamp,
@@ -268,13 +262,7 @@ function handleUserRecord(
 	);
 
 	if (toolResultBlocks.length > 0) {
-		// `toolUseResult` is a single sibling field on the record. Every real record observed so
-		// far carries exactly one tool_result block, and `toolUseResult` corresponds 1:1 to it —
-		// no real example of multiple tool_result blocks in one record has been found (verified
-		// across every transcript on this machine), but the code stays defensive in case that
-		// assumption is ever wrong: the async-launch detection and the raw `toolUseResult`
-		// passthrough only apply when there's exactly one block, since attributing one shared
-		// field to more than one distinct call would be a guess, not a fact.
+		// toolUseResult is a single sibling field — only trust it when exactly one tool_result block is present.
 		const isSingleBlock = toolResultBlocks.length === 1;
 		const asyncAck = toolUseResult as { isAsync?: boolean; status?: string } | undefined;
 
@@ -285,12 +273,7 @@ function handleUserRecord(
 				continue;
 			}
 
-			// An async-launched call (background Agent/Bash) first returns an immediate "launched
-			// successfully" acknowledgment here, not its real result — the actual result arrives
-			// later via a task-notification record. Detected structurally via the sibling
-			// `toolUseResult` field, not by guessing from the call's own input (which doesn't
-			// reliably carry a run_in_background flag). Leave the call pending so the later
-			// notification can resolve it.
+			// Async launch is detected via the sibling toolUseResult field, not the call's own input — leave pending for the later task-notification.
 			if (
 				isSingleBlock &&
 				asyncAck?.isAsync === true &&

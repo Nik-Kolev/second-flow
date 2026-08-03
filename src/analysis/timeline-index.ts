@@ -1,10 +1,6 @@
 import type { TimelineEvent } from '../parser/index.js';
 
-// Two lookup styles, because upstream signals reference a trigger turn two different ways:
-// rate-limit hits / cache-ratio points / cache drops / context-budget points carry a `turnIndex`
-// scoped to assistant-turns only (see stats/*.ts's `turns.forEach((turn, turnIndex) => ...)`
-// pattern) — not a `uuid`. Boundary candidates / lint findings / subagent invocations carry only
-// a `toolUseId`. Nothing in the parser or stats layer maps either back to a raw `timeline` index.
+// Two lookup styles: upstream signals key by turnIndex (assistant-turns only) or by toolUseId, never both.
 export interface TimelineIndex {
 	byId: Map<string, number>;
 	assistantTurnRawIndices: number[];

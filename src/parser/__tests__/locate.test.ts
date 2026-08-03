@@ -67,6 +67,18 @@ test('listSessionFiles throws a clear error for a missing slug directory', async
 	);
 });
 
+test('listSessionFiles rejects a slug containing a path separator or ".."', async () => {
+	await assert.rejects(() => listSessionFiles('../escape'), /Invalid slug/);
+	await assert.rejects(() => listSessionFiles('..'), /Invalid slug/);
+	await assert.rejects(() => listSessionFiles('a/b'), /Invalid slug/);
+	await assert.rejects(() => listSessionFiles('a\\b'), /Invalid slug/);
+});
+
+test('resolveSessionFilePath rejects an unsafe slug or sessionId', () => {
+	assert.throws(() => resolveSessionFilePath('../escape', 'session-a'), /Invalid slug/);
+	assert.throws(() => resolveSessionFilePath('my-slug', '../../escape'), /Invalid sessionId/);
+});
+
 test('slugFromCwd replaces path separators and colons with dashes', () => {
 	assert.equal(
 		slugFromCwd('C:\\Users\\user\\Documents\\GitHub\\second-flow'),

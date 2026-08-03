@@ -6,9 +6,7 @@ import type {
 
 export type { AttachmentBucket, HookSuccessAttachment, McpInstructionsDeltaAttachment };
 
-// 'managed' (enterprise/managed-policy CLAUDE.md) is named in the design doc's vocabulary but no
-// v1 discovery function produces it — kept in the union so downstream consumers can already
-// switch over the full intended vocabulary exhaustively.
+// 'managed' is named in the design vocabulary but no v1 discovery function produces it yet — kept for exhaustive downstream switches.
 export type RulebookLayer = 'managed' | 'user' | 'project' | 'environmental' | 'memory';
 
 interface RuleBlockBase {
@@ -36,10 +34,7 @@ export interface EnvironmentalRuleBlock extends RuleBlockBase {
 	meta?: { uuid?: string; timestamp?: string; names?: string[] };
 }
 
-// Scoped per-session by which files that session's own transcript shows were actually Read (memory
-// content is on-demand, never always-active like CLAUDE.md) — see src/rulebook/memory.ts. Content
-// is always re-read live from disk at audit time, same as FileRuleBlock, never frozen to whatever
-// the session originally saw.
+// Scoped per-session by which files the transcript shows were actually Read — see memory.ts.
 export interface MemoryRuleBlock extends RuleBlockBase {
 	origin: 'memory';
 	layer: Extract<RulebookLayer, 'memory'>;

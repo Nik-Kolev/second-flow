@@ -1,7 +1,4 @@
-// Provisional — needs calibration against real friction sessions (Core step 9), not validated
-// patterns. Pass 1 must stay a free heuristic (no LLM call), so a missed match here is a silent
-// false negative that skips Pass 2 entirely for that turn — the project's own plan notes flag
-// this exact risk and defer calibration rather than asking this step to get it right up front.
+// Provisional, needs calibration against real friction sessions — a missed match here silently skips Pass 2 for that turn.
 
 const PUSHBACK_PATTERNS: RegExp[] = [
 	/\bno,?\s+that'?s\s+(not|wrong|incorrect)\b/i,

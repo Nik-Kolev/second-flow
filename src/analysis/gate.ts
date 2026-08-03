@@ -15,15 +15,11 @@ export type GateTriggerKind =
 export interface GateTrigger {
 	kind: GateTriggerKind;
 	timelineIndex: number;
-	// Only set for trigger kinds whose raw evidence-window text doesn't self-explain (a rate-limit
-	// status code, a cache-ratio drop) — lint findings, repeat-subagent calls, and user messages
-	// are already visible directly in the serialized evidence window, so they leave this unset.
+	// Unset for kinds already visible directly in the serialized evidence window (lint findings, repeat-subagent calls, user messages).
 	signal?: string;
 }
 
-// Free, no DB/LLM — decides whether a session is worth Pass 2's Sonnet call. Any deterministic
-// lint finding (which already includes the boundary-compact checker when activated) is the
-// primary trigger; the rest are the supporting signals stats/heuristics already compute.
+// Free, no DB/LLM — decides whether a session is worth Pass 2. Any deterministic lint finding is the primary trigger; the rest are supporting signals stats/heuristics already compute.
 export function collectGateTriggers(
 	session: ParsedSession,
 	stats: SessionStats,

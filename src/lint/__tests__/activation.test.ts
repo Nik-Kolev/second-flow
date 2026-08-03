@@ -262,6 +262,37 @@ test('a stale checker id in the cache is not treated as a complete cache', async
 		'a stale checker id must not be mistaken for a complete cache',
 	);
 	assert.equal(result['shell-command-label'], true);
+
+	const staleRowSurvived = await testPrisma.checkerActivation.findFirst({
+		where: { checkerId: 'old-removed-checker-id' },
+	});
+	assert.equal(
+		staleRowSurvived,
+		null,
+		'the orphaned row must be deleted during the rebuild, not left behind',
+	);
+
+	const rowCount = await testPrisma.checkerActivation.count({
+		where: { rulebookHash: staleRow.rulebookHash },
+	});
+	assert.equal(
+		rowCount,
+		CHECKERS.length,
+		'exactly one row per current checker, no orphan left over',
+	);
+
+	const healedFake = makeFakeAnthropic({
+		'commit-gating': true,
+		'format-before-commit': true,
+		'shell-command-label': true,
+		'boundary-compact': false,
+	});
+	await getActivationMap(rulebook, { prisma: testPrisma, anthropic: healedFake.client });
+	assert.equal(
+		healedFake.calls(),
+		0,
+		'the cache must heal after the rebuild — a third call must not keep re-hitting Haiku forever',
+	);
 });
 
 test('two concurrent calls for the same uncached rulebook only call Haiku once', async () => {

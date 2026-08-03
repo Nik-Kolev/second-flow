@@ -50,8 +50,7 @@ interface SubagentSidecar {
 	toolUseId?: unknown;
 }
 
-// A subagent's filename doesn't encode the tool-use id that spawned it — only its .meta.json
-// sidecar does, so that's the join key. Never throws; any failure just leaves subagentModel unset.
+// A subagent's filename doesn't encode its spawning tool-use id — only the .meta.json sidecar does, so that's the join key. Never throws; failure just leaves subagentModel unset.
 export async function enrichSubagentModels(
 	timeline: TimelineEvent[],
 	filePath: string,

@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { AttachmentBucket, TimelineEvent } from '../parser/index.js';
 import { discoverGlobalRulebook, discoverProjectRulebook } from './discover.js';
 import { extractEnvironmentalRuleBlocks } from './environmental.js';
@@ -21,10 +22,10 @@ export async function resolveRulebook(
 ): Promise<RulebookResolution> {
 	const [global, project, memory] = await Promise.all([
 		discoverGlobalRulebook(opts),
-		meta.cwd
+		meta.cwd && path.isAbsolute(meta.cwd)
 			? discoverProjectRulebook(meta.cwd)
 			: Promise.resolve({ blocks: [], found: false }),
-		meta.cwd
+		meta.cwd && path.isAbsolute(meta.cwd)
 			? discoverMemoryRulebook(timeline, meta.cwd, opts)
 			: Promise.resolve({ blocks: [], count: 0 }),
 	]);
@@ -32,9 +33,7 @@ export async function resolveRulebook(
 	const environmentalBlocks = extractEnvironmentalRuleBlocks(attachments);
 
 	return {
-		// Memory/stack blocks are appended last — anything downstream that depends on block
-		// ordering (e.g. src/lint/activation.ts's rulebook-hash cache) keeps seeing the same
-		// global/project/hook/environmental sequence it always has.
+		// Order doesn't matter downstream — activation.ts's hash cache filters memory blocks by origin, not position.
 		blocks: [
 			...global.blocks,
 			...project.blocks,

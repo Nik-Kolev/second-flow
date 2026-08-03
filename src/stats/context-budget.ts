@@ -1,13 +1,11 @@
 import type { AssistantTurnEvent, TimelineEvent, UsageInfo } from '../parser/index.js';
 import type { ContextBudgetPoint } from './types.js';
 
-// Hand-maintained, keyed by the exact `model` string the API returns — staleness risk, not
-// sourced from any API. Left empty until real figures are verified against Anthropic's docs.
+// Hand-maintained, keyed by the exact `model` string the API returns — empty until real per-model windows are verified against Anthropic's docs.
 export const MODEL_CONTEXT_WINDOWS: Record<string, number> = {};
 
 export function turnContextTokens(usage: UsageInfo): number {
-	// The Messages API is stateless and resends the full conversation every call, so a turn's own
-	// usage numbers are already that turn's whole context — summing across turns would double-count.
+	// Stateless API resends full history each call, so a turn's usage IS its total context.
 	return (
 		usage.inputTokens +
 		(usage.cacheReadInputTokens ?? 0) +

@@ -5,13 +5,7 @@ export interface ModelPricing {
 	cacheWrite: number;
 }
 
-// Per-million-token USD rates, verified against the Anthropic API pricing table on 2026-07-25 —
-// not training-data recall. Sonnet's figures are the introductory rate, active through
-// 2026-08-31; after that, update to input 3.00 / output 15.00 / cacheRead 0.30 / cacheWrite 3.75
-// (the standard rate). Cache-write uses the 1.25x (5-minute TTL) multiplier, not 2x (1-hour) —
-// `grep -rn cache_control src/` returns no matches, so every call in this codebase runs at the
-// API's default TTL. Must cover every entry in settings.ts's JUDGMENT_MODELS allowlist, or a
-// selectable model's spend would silently cost $0 on the meter.
+// Per-MTok USD rates verified against Anthropic's pricing table 2026-07-25 — Sonnet's introductory rate expires 2026-08-31 (then 3.00/15.00/0.30/3.75); must cover every JUDGMENT_MODELS entry or spend silently reads $0.
 export const PRICING_PER_MTOK: Record<string, ModelPricing> = {
 	'claude-haiku-4-5': { input: 1.0, output: 5.0, cacheRead: 0.1, cacheWrite: 1.25 },
 	'claude-sonnet-5': { input: 2.0, output: 10.0, cacheRead: 0.2, cacheWrite: 2.5 },
@@ -30,9 +24,7 @@ export interface CallCostInput {
 export function computeCallCostUsd(call: CallCostInput): number {
 	const pricing = PRICING_PER_MTOK[call.model];
 	if (!pricing) {
-		// Defensive only — AuditRunCall.model is either the hardcoded HAIKU_MODEL constant
-		// (ledger.ts/activation.ts) or a JUDGMENT_MODELS allowlist entry (settings.ts), and the
-		// allowlist is required to have a pricing row above.
+		// Defensive only — AuditRunCall.model is either the hardcoded HAIKU_MODEL constant or a JUDGMENT_MODELS entry, which is required to have a pricing row above.
 		console.warn(`No pricing entry for model "${call.model}" — treating its cost as $0`);
 		return 0;
 	}

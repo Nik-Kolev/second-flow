@@ -252,6 +252,15 @@ test('GET /api/projects/:slug/sessions is 404 for an unknown slug', async () => 
 	assert.equal(res.status, 404);
 });
 
+test('GET /api/projects/:slug/sessions does not mask a non-ENOENT error as a false 404', async () => {
+	// %5C decodes to a literal backslash in req.params.slug — a plain "." / ".." segment gets
+	// collapsed by URL normalization before the request is even sent, but a backslash survives,
+	// still tripping locate.ts's path-traversal guard. That's a non-ENOENT error and must not be
+	// silently reported as "no project directory found".
+	const res = await fetch(`${baseUrl}/api/projects/a%5Cb/sessions`);
+	assert.equal(res.status, 500);
+});
+
 test('preview on a clean session waves through, free: no create call, no count_tokens call', async () => {
 	const createCallsBefore = fake.createCalls();
 	const countBefore = fake.countTokensCalls();
@@ -364,6 +373,28 @@ test('audit of a triggered session runs judgment and persists findings with coun
 	const calls = await testPrisma.auditRunCall.findMany({ where: { purpose: 'judgment' } });
 	assert.equal(calls.length, 1);
 	assert.equal(calls[0].model, 'claude-sonnet-5');
+});
+
+test('two concurrent audit requests for the same session never both bill — one wins, one gets a 409', async () => {
+	const [first, second] = await Promise.all([
+		fetch(`${baseUrl}/api/projects/${SLUG}/sessions/${CLEAN_SESSION}/audit`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({}),
+		}),
+		fetch(`${baseUrl}/api/projects/${SLUG}/sessions/${CLEAN_SESSION}/audit`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({}),
+		}),
+	]);
+	const statuses = [first.status, second.status].sort();
+	assert.deepEqual(statuses, [200, 409], 'exactly one request should succeed');
+
+	const rows = await testPrisma.auditedSession.findMany({
+		where: { transcriptSessionId: CLEAN_SESSION },
+	});
+	assert.equal(rows.length, 1, 'the race must never produce two AuditedSession rows');
 });
 
 test('re-auditing without force is a 409 carrying the existing audit; force re-audits', async () => {

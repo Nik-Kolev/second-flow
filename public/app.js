@@ -37,8 +37,7 @@ const PROPOSAL_STATUS_META = {
 	dismissed: { color: 'var(--ink-muted)', icon: ICONS.minusCircle, label: 'Dismissed' },
 };
 
-// Category identity (which rulebook layer a note is about) — deliberately not colored by
-// severity, so it never competes with the outcome-level good/warning/critical signal.
+// Category identity (which rulebook layer a note is about) — deliberately not colored by severity, so it never competes with the outcome-level signal.
 const CATEGORY_META = {
 	compliance: { color: 'var(--category-compliance)', label: 'Compliance' },
 	environmentalInstruction: { color: 'var(--category-environmental)', label: 'Environmental' },
@@ -55,8 +54,7 @@ const SESSION_STATUS_META = {
 	},
 };
 
-// One entry per src/analysis/gate.ts's GateTriggerKind union — kept in sync by hand, since the
-// confirm dialog is the only place these need a plain-English explanation.
+// One entry per src/analysis/gate.ts's GateTriggerKind union — kept in sync by hand.
 const TRIGGER_KIND_META = {
 	'lint-finding': {
 		label: 'Lint finding',
@@ -95,8 +93,7 @@ const state = {
 	projects: [],
 	currentSlug: null,
 	sessions: [],
-	// Number of extra "Load N more" pages revealed beyond the default view — reset whenever a
-	// project's session list is freshly fetched.
+	// Number of extra "Load N more" pages revealed beyond the default view — reset on a fresh fetch.
 	sessionsVisibleExtra: 0,
 	currentFindings: null,
 };
@@ -109,17 +106,7 @@ function escapeHtml(value) {
 		.replace(/"/g, '&quot;');
 }
 
-// Evidence is free-text prose the judgment model writes — there's no structured "this part is a
-// rule, this part is the user" data to color per category. What IS reliable: quoted spans ('...')
-// mark referenced material (rule wording, a user message, an agent/skill name) regardless of which
-// — setting those apart from the surrounding analysis, plus splitting the wall of prose into
-// sentence-per-line, is a real readability win without pretending to categorize what can't be.
-// A fresh RegExp per call avoids g-flag lastIndex state leaking between exec()/replace() uses.
-// Outer lookaround excludes a contraction apostrophe (user's, doesn't) from being read as the
-// quote's own open/close mark. The inner alternation additionally lets a contraction *inside* an
-// already-open quote (e.g. "...when it's actually time...") be consumed as ordinary content
-// instead of wrongly ending the match early — without it, "[^']*?" can never skip past that
-// apostrophe (it's excluded from the class either way) and the real closing quote is never found.
+// Evidence is unstructured prose; quoted spans ('...') are the only reliable signal to highlight — the lookaround excludes contraction apostrophes (user's) from being read as quote marks, and a fresh RegExp per call avoids g-flag lastIndex leaking between calls.
 function quoteRegex() {
 	return /(?<![a-zA-Z])'((?:[^']|(?<=[a-zA-Z])'(?=[a-zA-Z]))*?)'(?![a-zA-Z])/g;
 }
@@ -145,10 +132,7 @@ function isInsideAnyRange(pos, ranges) {
 	return ranges.some(([start, end]) => pos > start && pos < end);
 }
 
-// Splits on sentence boundaries, but never inside a quoted span — a quote that itself contains
-// more than one sentence (e.g. "'Plan approved. Let me set up tasks...'") must stay whole, or
-// its closing mark ends up in a different paragraph than its opening one and highlightQuotes
-// (which only looks within one paragraph at a time) can't find the matching pair.
+// Splits on sentence boundaries but never inside a quoted span — a multi-sentence quote must stay whole or highlightQuotes can't find its matching pair across paragraphs.
 function splitIntoSentences(text) {
 	const quoteRanges = findQuoteRanges(text);
 	const splitRe = /(?<=[^.][.!?])\s+(?=[A-Z(])/g;
@@ -172,8 +156,7 @@ function formatEvidence(text) {
 		.join('');
 }
 
-// A short "what's this actually about" line for the top of a note card — the first quoted span
-// in the evidence, since that's almost always the rule/skill/message being referenced.
+// A short "what's this about" line for a note card — the first quoted span, since that's almost always the thing being referenced.
 function extractLede(text) {
 	const match = quoteRegex().exec(text);
 	if (!match) {
@@ -183,9 +166,7 @@ function extractLede(text) {
 	return quote.length > 70 ? `${quote.slice(0, 70)}…` : quote;
 }
 
-// A one-line summary for compact cards — falls back to a capped first sentence when there's no
-// quoted span, or when the quote is too short to stand alone (e.g. a section name like "Session
-// end" rather than an actual description) to be a useful one-line summary on its own.
+// Falls back to a capped first sentence when there's no quoted span, or the quote's too short to stand alone (e.g. a bare section name).
 const MIN_USEFUL_LEDE_LENGTH = 20;
 
 function shortSummary(text) {
@@ -197,8 +178,7 @@ function shortSummary(text) {
 	return firstSentence.length > 100 ? `${firstSentence.slice(0, 100)}…` : firstSentence;
 }
 
-// Judgment calls cost fractions of a cent to a few dollars — two decimals would round a $0.0092
-// activation call to $0.01, so sub-dollar amounts get four.
+// Judgment calls cost fractions of a cent to a few dollars — two decimals would round $0.0092 to $0.01, so sub-dollar amounts get four.
 function formatUsd(amount) {
 	return new Intl.NumberFormat('en-US', {
 		style: 'currency',
@@ -243,9 +223,7 @@ function formatBytes(bytes) {
 	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// Sentence-cases a raw kind string ("lint-finding" -> "Lint finding") so every dialog row label —
-// whether it comes from a fixed string in this file or a dynamic trigger kind from the server —
-// reads with the same capitalization convention.
+// Sentence-cases a raw kind string ("lint-finding" -> "Lint finding") so every dialog row label reads with the same capitalization.
 function prettyKind(kind) {
 	const words = kind
 		.replace(/[-_]/g, ' ')
@@ -258,10 +236,7 @@ function triggerKindMeta(kind) {
 	return TRIGGER_KIND_META[kind] ?? { label: prettyKind(kind), description: '' };
 }
 
-// The slug Claude Code assigns a project directory is a lossy encoding of its real path (every
-// path separator AND every literal hyphen in a folder name both collapse to "-"), so it can never
-// be decoded back reliably. `cwd`, when available (peeked server-side from a real transcript
-// record), is the actual unambiguous path — these helpers turn it into a friendly display.
+// The slug is a lossy encoding of the real path (separators and hyphens both collapse to "-") — cwd, when available, is the actual unambiguous path these helpers display.
 function splitPath(rawPath) {
 	return rawPath.split(/[/\\]+/).filter(Boolean);
 }
@@ -379,9 +354,7 @@ function renderSettings(settings) {
 	}
 }
 
-// The one place the judgmentModel setting actually gets written — both the popover's radio group
-// and the confirm dialog's model select call this, so there is never a second, disconnected copy
-// of "which model is selected" to fall out of sync.
+// The one place judgmentModel actually gets written — both the popover and the confirm dialog call this, so there's never a second copy to fall out of sync.
 async function persistJudgmentModel(modelId) {
 	await api('/api/dashboard/settings', {
 		method: 'PUT',
@@ -534,8 +507,7 @@ function sessionBadgesHtml(session) {
 }
 
 function sessionRowHtml(session) {
-	// The re-audit button is deliberately quiet unless the transcript changed — an unchanged
-	// session's re-audit would double-spend for the same evidence.
+	// Deliberately quiet unless the transcript changed — an unchanged session's re-audit would double-spend for the same evidence.
 	const reauditHtml = session.audit
 		? `<button type="button" class="reaudit-button${session.audit.changedSinceAudit === true ? ' prominent' : ''}" data-reaudit="${escapeHtml(session.sessionId)}">Re-audit</button>`
 		: '';
@@ -554,8 +526,7 @@ function sessionRowHtml(session) {
 const SESSIONS_RECENT_DAYS = 7;
 const SESSIONS_PAGE_SIZE = 10;
 
-// Sessions arrive newest-first (by fileMtime) — count how many fall within the recent window
-// before hitting the first older one, since everything after that point is older still.
+// Sessions arrive newest-first — count how many fall within the recent window before the first older one.
 function countRecentSessions(sessions) {
 	const cutoffMs = Date.now() - SESSIONS_RECENT_DAYS * 24 * 60 * 60 * 1000;
 	let count = 0;
@@ -574,9 +545,7 @@ function renderSessions() {
 	const name = project ? projectName(project) : state.currentSlug;
 	const path = project ? projectPath(project) : state.currentSlug;
 
-	// The last 7 days are always fully visible (never hidden behind a click), with a floor of
-	// SESSIONS_PAGE_SIZE so a quiet project still shows a reasonable amount up front. Anything
-	// beyond that loads 10 at a time.
+	// The last 7 days are always fully visible, with a floor of SESSIONS_PAGE_SIZE; anything beyond that loads 10 at a time.
 	const baseVisible = Math.max(countRecentSessions(state.sessions), SESSIONS_PAGE_SIZE);
 	const visibleCount = Math.min(
 		state.sessions.length,
@@ -636,9 +605,7 @@ function closeDialog() {
 	document.getElementById('audit-dialog').close();
 }
 
-// A native <dialog>'s ::backdrop isn't a real element you can attach a listener to — a click on it
-// still fires on the <dialog> itself, so the only way to detect "outside the visible box" is to
-// compare the click's coordinates against the dialog's own bounding rect.
+// A native <dialog>'s ::backdrop click still fires on the <dialog> itself — detect "outside" by comparing click coordinates against the dialog's bounding rect.
 function wireDialogBackdropClose() {
 	const dialog = document.getElementById('audit-dialog');
 	dialog.addEventListener('click', (event) => {
@@ -710,9 +677,7 @@ function toastBodyHtml({ icon, message }) {
 		<button type="button" class="toast-dismiss" aria-label="Dismiss notification">${iconSvg(ICONS.close, 'currentColor')}</button>`;
 }
 
-// Newest toast is always appended last, so with plain column flow (no column-reverse) it lands at
-// the fixed bottom anchor while older toasts get pushed upward — the stacking order falls out of
-// normal DOM order for free, no extra positioning logic needed.
+// Newest toast is appended last, so plain column flow (no column-reverse) lands it at the bottom anchor with older toasts pushed upward — no extra positioning logic needed.
 function showToast({ icon, message, auditedSessionId }) {
 	const container = document.getElementById('toast-container');
 	while (container.children.length >= TOAST_MAX) {
@@ -925,8 +890,7 @@ function findingListHtml(cardsHtml) {
 	`;
 }
 
-// A bucket heading always carries its count, and an empty bucket says so explicitly ("None this
-// audit") rather than disappearing — a category with nothing to report is itself an answer.
+// An empty bucket says so explicitly ("None this audit") rather than disappearing — nothing to report is itself an answer.
 function bucketSectionHtml(icon, iconColor, label, items, cardFn) {
 	const heading = `<h3 class="kind-heading">${iconSvg(icon, iconColor)}${escapeHtml(label)} <span class="kind-heading-count">(${items.length})</span></h3>`;
 	if (items.length === 0) {
@@ -976,10 +940,7 @@ function recurrenceBadgeHtml(marker) {
 	});
 }
 
-// notesByKind groups compliance/environmental notes by rulebook layer (from the API) — this
-// further splits those two kinds by the judgment model's own outcome classification, since
-// outcome is the axis the Findings tab actually organizes cards around. Pre-migration rows have
-// outcome: null and land in their own bucket rather than being guessed into either side.
+// Further splits compliance/environmental notes by outcome, the axis Findings actually organizes around — pre-migration null-outcome rows land in their own bucket, never guessed.
 function bucketNotesByOutcome(notesByKind) {
 	const violations = [];
 	const positives = [];
@@ -999,8 +960,7 @@ function bucketNotesByOutcome(notesByKind) {
 	return { violations, positives, unclassified };
 }
 
-// Full evidence prose stays available, just never forced open — a card's default state is the
-// one-line summary, matching every other compact card here (positives, prompt coaching).
+// Full evidence stays available, just never forced open — default state is the one-line summary, matching every other compact card here.
 function expandableEvidenceHtml(evidence) {
 	return `
 		<details class="evidence-toggle">
@@ -1021,8 +981,7 @@ function violationNoteCardHtml(note) {
 	`;
 }
 
-// Compact by design — a positive instance isn't a problem to weigh, just a confirmation, so it
-// gets one line and no evidence expansion at all.
+// Compact by design — a positive instance isn't a problem to weigh, just a confirmation.
 function positiveNoteCardHtml(note) {
 	return `
 		<div class="positive-row">
@@ -1033,9 +992,7 @@ function positiveNoteCardHtml(note) {
 	`;
 }
 
-// Pre-migration rows have no outcome at all — shown as their own bucket rather than folded into
-// either violations or positives, since that would be guessing at a verdict the judgment model
-// never actually made.
+// Pre-migration rows have no outcome — their own bucket, not folded into violations/positives since that would be guessing a verdict never actually made.
 function unclassifiedNoteCardHtml(note) {
 	return `
 		<article class="finding-card">
@@ -1096,9 +1053,7 @@ function auditChipHtml(entry) {
 
 const AUDIT_CHIP_VISIBLE_CAP = 5;
 
-// A single-audit session has nothing to switch between, so the strip only earns its place once
-// there's an actual choice to make. Past the visible cap, the rest collapse behind a "+N more"
-// toggle instead of the row wrapping indefinitely.
+// A single-audit session has nothing to switch between, so the strip only earns its place with an actual choice; past the visible cap, the rest collapse behind "+N more".
 function auditChipStripHtml(history) {
 	if (history.length <= 1) {
 		return '';
@@ -1175,10 +1130,7 @@ function renderFindings(data) {
 
 	let bodyHtml;
 	if (totalFindings > 0) {
-		// The 4 core buckets always render, counted, even at zero — an empty bucket is itself an
-		// answer ("nothing missed this audit"), not something to hide as if the category didn't
-		// apply. "Not classified" is the exception: a transitional bucket for pre-migration data,
-		// shown only when it actually has something in it.
+		// The 4 core buckets always render, counted, even at zero — "Not classified" is the exception, shown only when it has something.
 		const sections = [
 			bucketSectionHtml(
 				ICONS.wrench,
@@ -1250,12 +1202,7 @@ function renderFindings(data) {
 	}
 }
 
-// Mirrors renderFindings' structure and ordering (session summary, then
-// proposals-first-then-fixed-note-kind-order sections, then the same three empty-state
-// sentences) but emits plain Markdown instead of HTML, and omits the audit-history list —
-// sibling audit IDs have no meaningful Markdown analogue outside the running app. Kept
-// independent rather than sharing helpers with renderFindings, since the two are fundamentally
-// different output shapes — if renderFindings' section logic changes, make the same change here.
+// Mirrors renderFindings' structure but emits Markdown, omitting the audit-history list (no meaningful analogue outside the app) — kept independent, update both if section logic changes.
 function buildFindingsMarkdown(data) {
 	const session = data.auditedSession;
 	const statusLabel = (SESSION_STATUS_META[session.status] ?? { label: session.status }).label;
@@ -1292,8 +1239,7 @@ function buildFindingsMarkdown(data) {
 		promptNotes.length +
 		buckets.unclassified.length;
 
-	// The 4 core buckets always get a heading (with count), even at zero — mirrors renderFindings'
-	// "an empty bucket is itself an answer" treatment. "Not classified" stays conditional.
+	// The 4 core buckets always get a heading, even at zero — mirrors renderFindings; "Not classified" stays conditional.
 	const sections = [
 		['Rule change proposed', data.proposals.map(proposalMarkdown)],
 		['No rule change — just missed', buckets.violations.map(noteMarkdown)],
@@ -1330,8 +1276,7 @@ function buildFindingsMarkdown(data) {
 	return lines.join('\n');
 }
 
-// A fence sized to one backtick longer than any run already in the text — rule wording can
-// itself contain fenced code examples, and a fixed ``` fence would close early on those.
+// Sized to one backtick longer than any run already in the text — a fixed ``` fence would close early on wording that itself contains fenced examples.
 function fenceFor(text) {
 	const runs = text.match(/`+/g) ?? [];
 	const longestRun = runs.reduce((max, run) => Math.max(max, run.length), 0);
@@ -1366,8 +1311,7 @@ function proposalMarkdown(proposal) {
 	].join('\n');
 }
 
-// Mirrors the label text recurrenceBadgeHtml (above) renders onto a badge — plain text here
-// since a Markdown file has no badge, just the same three possible sentences.
+// Mirrors recurrenceBadgeHtml's label text, plain since a Markdown file has no badge.
 function recurrenceLabelText(marker) {
 	if (marker.kind === 'recurred') {
 		const plural = marker.laterAuditCount === 1 ? '' : 's';
@@ -1390,8 +1334,7 @@ function noteMarkdown(note) {
 	return lines.join('\n');
 }
 
-// Mirrors positiveNoteCardHtml's compactness — a confirmation, not a problem to weigh, so one
-// bullet line rather than the full ref/recurrence/evidence card the other note kinds get.
+// Mirrors positiveNoteCardHtml's compactness — one bullet line, not the full card other note kinds get.
 function positiveNoteMarkdown(note) {
 	return `- ${shortSummary(note.evidence)}`;
 }
@@ -1458,8 +1401,7 @@ function proposalCardHtml(group) {
 	`;
 }
 
-// The empty state is provable, not a shrug: Unit 1's dropped-proposal counters let it say whether
-// the judgment model genuinely returned zero or returned some that were dropped as invalid.
+// The empty state is provable, not a shrug — dropped-proposal counters say whether the model returned zero or some were dropped as invalid.
 function renderProposalsTab() {
 	const el = document.getElementById('panel-proposals');
 	if (state.proposals.length > 0) {

@@ -36,8 +36,7 @@ import type { RulebookDiscoveryOptions, RulebookResolution } from '../rulebook/i
 import { computeSessionStats } from '../stats/index.js';
 import type { SessionStats } from '../stats/index.js';
 
-// Structural superset of the judgment/activation client interfaces: routes additionally need the
-// free count_tokens endpoint for preview estimates. The real SDK client satisfies all of them.
+// Structural superset of the judgment/activation client interfaces — routes also need the free count_tokens endpoint; the real SDK client satisfies all of them.
 interface SessionsAnthropicClient {
 	messages: {
 		create(params: JudgmentRequestParams): Promise<Anthropic.Message>;
@@ -52,13 +51,11 @@ interface SessionsAnthropicClient {
 export interface SessionsRouterDeps {
 	prisma?: typeof prismaClient;
 	anthropic?: SessionsAnthropicClient;
-	// Threads through to resolveRulebook so tests can point the global-CLAUDE.md discovery at a
-	// fixture directory instead of the real home directory.
+	// Threads through to resolveRulebook so tests can point global-CLAUDE.md discovery at a fixture dir.
 	rulebookOpts?: RulebookDiscoveryOptions;
 }
 
-// A continued session appends to its transcript, so a size mismatch alone is a reliable signal.
-// The mtime tolerance absorbs sub-second precision loss in the DateTime round-trip.
+// A continued session appends to its transcript, so a size mismatch is a reliable signal; the mtime tolerance absorbs DateTime round-trip precision loss.
 const MTIME_TOLERANCE_MS = 2000;
 
 function isChangedSinceAudit(
@@ -85,9 +82,7 @@ interface SessionArtifacts {
 	lintFindings: LintFinding[];
 }
 
-// Shared by preview and audit. Nearly free: parse/stats/lint are in-memory; the one exception is
-// activation classification, which costs a single cached Haiku call on the first-ever sight of a
-// given rulebook (logged to AuditRunCall by activation.ts) and nothing after that.
+// Shared by preview and audit — nearly free; the one exception is activation classification's single cached Haiku call on first sight of a rulebook.
 async function loadSessionArtifacts(
 	slug: string,
 	sessionId: string,
@@ -136,6 +131,8 @@ export function createSessionsRouter(deps: SessionsRouterDeps = {}): Router {
 	const prisma = deps.prisma ?? prismaClient;
 	const anthropic = deps.anthropic ?? anthropicClient;
 	const router = Router();
+	// Closes the audit POST's check-then-act race — set synchronously before any await, same pattern as activation.ts's cache dedup.
+	const auditsInFlight = new Set<string>();
 
 	router.get('/projects', async (_req, res) => {
 		const root = resolveProjectsRoot();
@@ -144,8 +141,7 @@ export function createSessionsRouter(deps: SessionsRouterDeps = {}): Router {
 			entries = await fs.readdir(root, { withFileTypes: true });
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-				// A missing projects root just means no Claude Code sessions exist yet — a legitimate
-				// empty state, not a server error.
+				// A missing projects root just means no Claude Code sessions exist yet — a legitimate empty state, not an error.
 				res.json({ projectsRoot: root, projects: [] });
 				return;
 			}
@@ -169,10 +165,7 @@ export function createSessionsRouter(deps: SessionsRouterDeps = {}): Router {
 				sessionFiles.map(async (file) => (await fs.stat(file)).mtimeMs),
 			);
 			const latestMtime = Math.max(...mtimes);
-			// The slug is a lossy encoding of the real path (a literal hyphen in a folder name is
-			// indistinguishable from a path-separator hyphen once slugified) — the transcript itself
-			// is the only place the real, unambiguous path survives, so the UI can show a friendly
-			// project name instead of the raw slug.
+			// The slug is a lossy encoding of the real path — the transcript's own cwd is the only place the unambiguous path survives, for a friendly project name.
 			const latestFile = sessionFiles[mtimes.indexOf(latestMtime)]!;
 			const cwd = await peekSessionCwd(latestFile);
 			projects.push({
@@ -191,9 +184,12 @@ export function createSessionsRouter(deps: SessionsRouterDeps = {}): Router {
 		let files: string[];
 		try {
 			files = await listSessionFiles(slug);
-		} catch {
-			res.status(404).json({ error: `No project directory found for slug "${slug}"` });
-			return;
+		} catch (error) {
+			if ((error as { cause?: NodeJS.ErrnoException }).cause?.code === 'ENOENT') {
+				res.status(404).json({ error: `No project directory found for slug "${slug}"` });
+				return;
+			}
+			throw error;
 		}
 		const fileInfos = await Promise.all(
 			files.map(async (file) => {
@@ -283,8 +279,7 @@ export function createSessionsRouter(deps: SessionsRouterDeps = {}): Router {
 			flaggedSignals,
 		);
 
-		// count_tokens is free but still a network call — an estimate failure must not block the
-		// preview, since the audit itself doesn't depend on it.
+		// count_tokens is free but still a network call — an estimate failure must not block the preview.
 		let estimate: {
 			inputTokens: number;
 			inputCostUsd: number;
@@ -329,79 +324,87 @@ export function createSessionsRouter(deps: SessionsRouterDeps = {}): Router {
 		const { slug, sessionId } = req.params;
 		const force = (req.body as { force?: unknown } | undefined)?.force === true;
 
-		const existing = await prisma.auditedSession.findFirst({
-			where: { projectSlug: slug, transcriptSessionId: sessionId },
-			orderBy: { createdAt: 'desc' },
-		});
-		if (existing && !force) {
-			res.status(409).json({
-				error: 'Session already audited — pass force: true to re-audit',
-				existing: {
-					auditedSessionId: existing.id,
-					status: existing.status,
-					auditedAt: existing.createdAt.toISOString(),
-				},
-			});
+		const lockKey = `${slug}:${sessionId}`;
+		if (auditsInFlight.has(lockKey)) {
+			res.status(409).json({ error: 'An audit for this session is already in progress' });
 			return;
 		}
+		auditsInFlight.add(lockKey);
 
-		const artifacts = await loadSessionArtifacts(slug, sessionId, deps);
-		if (!artifacts) {
-			res.status(404).json({ error: `No transcript found for session "${sessionId}"` });
-			return;
-		}
-		const gateResult = checkGateAndBuildEvidence({
-			session: artifacts.session,
-			stats: artifacts.stats,
-			lintFindings: artifacts.lintFindings,
-			rulebook: artifacts.rulebook,
-		});
-
-		const auditRun = await createAuditRun(deps);
 		try {
-			if (gateResult === null) {
-				// The free check is itself a result worth remembering: a wavedThrough row is what lets
-				// the session list say "audited, nothing found" without ever re-reading the transcript.
-				const auditedSession = await prisma.auditedSession.create({
-					data: {
-						transcriptSessionId: artifacts.session.sessionId,
-						projectSlug: artifacts.session.projectSlug,
-						auditRunId: auditRun.id,
-						status: AuditedSessionStatus.wavedThrough,
-						transcriptTokenTotal: sumTranscriptTokens(artifacts.session.timeline),
-						transcriptFileSize: artifacts.fileStat.size,
-						transcriptFileMtime: artifacts.fileStat.mtime,
-						proposalsCreated: 0,
-						notesCreated: 0,
-						droppedProposalCount: 0,
+			const existing = await prisma.auditedSession.findFirst({
+				where: { projectSlug: slug, transcriptSessionId: sessionId },
+				orderBy: { createdAt: 'desc' },
+			});
+			if (existing && !force) {
+				res.status(409).json({
+					error: 'Session already audited — pass force: true to re-audit',
+					existing: {
+						auditedSessionId: existing.id,
+						status: existing.status,
+						auditedAt: existing.createdAt.toISOString(),
 					},
 				});
-				res.json({ outcome: 'wavedThrough', auditedSessionId: auditedSession.id });
 				return;
 			}
 
-			// No confirmJudgmentBatch call here on purpose: this POST only ever fires from the UI's
-			// confirm dialog, so the request itself is the explicit spend confirmation — the
-			// no-silent-spend principle is honored one layer up.
-			const outcome = await executeJudgmentForSession(
-				{
-					session: artifacts.session,
-					stats: artifacts.stats,
-					lintFindings: artifacts.lintFindings,
-					rulebook: artifacts.rulebook,
-					transcriptFileStat: artifacts.fileStat,
-				},
-				auditRun.id,
-				gateResult.evidenceWindow,
-				gateResult.triggers,
-				deps,
-			);
-			res.json(outcome);
-		} finally {
-			await prisma.auditRun.update({
-				where: { id: auditRun.id },
-				data: { completedAt: new Date() },
+			const artifacts = await loadSessionArtifacts(slug, sessionId, deps);
+			if (!artifacts) {
+				res.status(404).json({ error: `No transcript found for session "${sessionId}"` });
+				return;
+			}
+			const gateResult = checkGateAndBuildEvidence({
+				session: artifacts.session,
+				stats: artifacts.stats,
+				lintFindings: artifacts.lintFindings,
+				rulebook: artifacts.rulebook,
 			});
+
+			const auditRun = await createAuditRun(deps);
+			try {
+				if (gateResult === null) {
+					// The free check is itself worth remembering — a wavedThrough row lets the session list say "audited, nothing found" without re-reading the transcript.
+					const auditedSession = await prisma.auditedSession.create({
+						data: {
+							transcriptSessionId: artifacts.session.sessionId,
+							projectSlug: artifacts.session.projectSlug,
+							auditRunId: auditRun.id,
+							status: AuditedSessionStatus.wavedThrough,
+							transcriptTokenTotal: sumTranscriptTokens(artifacts.session.timeline),
+							transcriptFileSize: artifacts.fileStat.size,
+							transcriptFileMtime: artifacts.fileStat.mtime,
+							proposalsCreated: 0,
+							notesCreated: 0,
+							droppedProposalCount: 0,
+						},
+					});
+					res.json({ outcome: 'wavedThrough', auditedSessionId: auditedSession.id });
+					return;
+				}
+
+				// No confirmJudgmentBatch here on purpose — this POST only fires from the UI's confirm dialog, so the request itself is the spend confirmation.
+				const outcome = await executeJudgmentForSession(
+					{
+						session: artifacts.session,
+						stats: artifacts.stats,
+						lintFindings: artifacts.lintFindings,
+						rulebook: artifacts.rulebook,
+						transcriptFileStat: artifacts.fileStat,
+					},
+					auditRun.id,
+					gateResult.evidenceWindow,
+					gateResult.triggers,
+					deps,
+				);
+				res.json(outcome);
+			} finally {
+				await prisma.auditRun.update({
+					where: { id: auditRun.id },
+					data: { completedAt: new Date() },
+				});
+			}
+		} finally {
+			auditsInFlight.delete(lockKey);
 		}
 	});
 
@@ -450,9 +453,7 @@ export function createSessionsRouter(deps: SessionsRouterDeps = {}): Router {
 		const modelByAuditRunId = new Map(
 			judgmentCalls.map((call) => [call.auditRunId, call.model]),
 		);
-		// A re-audit's judgment call is the one that determines its findings, so its cost/tokens are
-		// what's meaningful here — not the activation/reconciliation spend, which isn't tied to a
-		// single run.
+		// A re-audit's judgment call determines its findings, so its cost/tokens are what's meaningful here, not activation/reconciliation spend.
 		const costByAuditRunId = new Map(
 			judgmentCalls.map((call) => [call.auditRunId, computeCallCostUsd(call)]),
 		);

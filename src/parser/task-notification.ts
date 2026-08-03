@@ -21,11 +21,7 @@ function extractNumberTag(content: string, tag: string): number | undefined {
 	return match ? Number(match[1]) : undefined;
 }
 
-/**
- * Parses Claude Code's XML-ish `<task-notification>` text (not real XML — a handful of fixed
- * tags). Returns null when the content doesn't actually look like a task-notification, so the
- * caller can fall back to treating the record as a plain user message instead of crashing.
- */
+// Parses Claude Code's XML-ish <task-notification> text; returns null so the caller can fall back to a plain user message.
 export function parseTaskNotification(content: string): TaskNotificationInfo | null {
 	const toolUseId = extractTag(content, 'tool-use-id');
 	const taskId = extractTag(content, 'task-id');
@@ -38,8 +34,7 @@ export function parseTaskNotification(content: string): TaskNotificationInfo | n
 	const summary = extractTag(content, 'summary');
 	const outputFile = extractTag(content, 'output-file');
 
-	// Greedy, anchored on the fixed `</result>\n<usage>` boundary — a subagent's own result text
-	// can itself contain literal `<result>`-looking substrings, so a non-greedy match would stop early.
+	// Greedy on purpose — a subagent's own result text can contain literal <result>-looking substrings that a non-greedy match would stop at.
 	const resultMatch = content.match(/<result>([\s\S]*)<\/result>\n<usage>/);
 	const result = resultMatch ? scrubText(resultMatch[1]) : undefined;
 

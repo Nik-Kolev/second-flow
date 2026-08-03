@@ -8,7 +8,7 @@ import type { SessionStats } from './types.js';
 
 export * from './types.js';
 export { computeAgentUsageStats, extractSubagentType, groupInvocationsByType } from './agents.js';
-export { detectBoundaryCandidates, extractShellCommand } from './boundaries.js';
+export { detectBoundaryCandidates, extractShellCommand, SHELL_TOOL_NAMES } from './boundaries.js';
 export { computeCacheRatioSeries, detectUnexplainedCacheDrops } from './cache.js';
 export {
 	computeContextBudgetSeries,

@@ -5,9 +5,7 @@ import type {
 	RuleBlock,
 } from './types.js';
 
-// `entryIndex` (this entry's position among all deltas) scopes the fallback key so two different
-// delta entries that both lack addedNames never collide — a bare `mcp:${blockIndex}` would let a
-// later unnamed entry silently overwrite an earlier unrelated one in the active map below.
+// entryIndex scopes the fallback key so two nameless delta entries never collide in the active map below.
 function mcpKey(
 	entry: McpInstructionsDeltaAttachment,
 	entryIndex: number,
@@ -16,9 +14,7 @@ function mcpKey(
 	return entry.addedNames?.[blockIndex] ?? `mcp:${entryIndex}:${blockIndex}`;
 }
 
-// Nets `addedNames`/`removedNames` down to what's still connected by the end of the session —
-// surfacing a block for an MCP server the user disconnected mid-session would generate findings
-// against instructions that no longer applied, contradicting "audit against the current rulebook."
+// Nets down to what's still connected — a disconnected server's block would generate findings against instructions that no longer applied.
 function resolveMcpBlocks(deltas: McpInstructionsDeltaAttachment[]): RuleBlock[] {
 	const active = new Map<string, EnvironmentalRuleBlock>();
 

@@ -23,7 +23,7 @@ export function createDashboardRouter(deps: DashboardRouterDeps = {}): Router {
 	const router = Router();
 
 	router.get('/dashboard', async (_req, res) => {
-		const [calls, proposals, settings, sessionsAudited, openProposals, noteCount, droppedSum] =
+		const [calls, proposals, settings, sessionsAudited, openProposals, droppedSum] =
 			await Promise.all([
 				prisma.auditRunCall.findMany(),
 				getRankedProposalGroups(deps),
@@ -40,7 +40,6 @@ export function createDashboardRouter(deps: DashboardRouterDeps = {}): Router {
 						},
 					},
 				}),
-				prisma.analysisNote.count(),
 				prisma.auditedSession.aggregate({ _sum: { droppedProposalCount: true } }),
 			]);
 		res.json({
@@ -49,9 +48,7 @@ export function createDashboardRouter(deps: DashboardRouterDeps = {}): Router {
 				totalSpendUsd: computeTotalSpendUsd(calls),
 				sessionsAudited,
 				openProposalCount: openProposals,
-				noteCount,
-				// Lets the proposals tab distinguish "the model returned 0 proposals" from "proposals
-				// came back but were dropped as invalid" — the exact ambiguity Unit 1 was built to end.
+				// Lets the proposals tab distinguish "0 proposals" from "proposals dropped as invalid" — the ambiguity Unit 1 was built to end.
 				droppedProposalTotal: droppedSum._sum.droppedProposalCount ?? 0,
 			},
 			settings: {
@@ -77,9 +74,7 @@ export function createDashboardRouter(deps: DashboardRouterDeps = {}): Router {
 		res.json({ judgmentModel: settings.judgmentModel });
 	});
 
-	// Read-only over your config everywhere else — this is the one scoped write step 8 makes, and it
-	// only ever touches AuditSettings, never a rulebook/CLAUDE.md file. The ceiling has no UI since
-	// the Unit 3 rebuild (per-audit confirm replaced the meter) but stays functional server-side.
+	// Read-only over config everywhere else — this is the one scoped write, touching only AuditSettings. No UI since the per-audit confirm replaced the ceiling meter, but stays functional.
 	router.put('/dashboard/ceiling', async (req, res) => {
 		const value: unknown = req.body?.maxSonnetCallsPerRun;
 		if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 1000) {

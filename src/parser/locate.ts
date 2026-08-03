@@ -8,13 +8,16 @@ export function resolveProjectsRoot(): string {
 	return override ? override : path.join(os.homedir(), '.claude', 'projects');
 }
 
-/**
- * Lists session files directly under a project slug's directory — never recursing into any
- * subdirectory. This one filter is the entire subagent-exclusion mechanism: a real project slug
- * directory also contains CLAUDE.md, memory/, and `<session-id>/subagents/` sitting right
- * alongside the session files, and a non-recursive readdir simply never sees into them.
- */
+// Both callers below join this straight into a filesystem path — slug/sessionId are route params, so this blocks path traversal (e.g. "../../etc/passwd") before it ever reaches fs.
+function assertSafePathSegment(value: string, label: string): void {
+	if (value.length === 0 || value === '.' || value === '..' || /[/\\]/.test(value)) {
+		throw new Error(`Invalid ${label}: "${value}"`);
+	}
+}
+
+// Non-recursive readdir is the entire subagent-exclusion mechanism — CLAUDE.md, memory/, and `<session-id>/subagents/` sit alongside session files but are never seen.
 export async function listSessionFiles(slug: string): Promise<string[]> {
+	assertSafePathSegment(slug, 'slug');
 	const dir = path.join(resolveProjectsRoot(), slug);
 	let entries;
 	try {
@@ -45,32 +48,21 @@ export async function findLatestSessionFile(slug: string): Promise<string | null
 }
 
 export function resolveSessionFilePath(slug: string, sessionId: string): string {
+	assertSafePathSegment(slug, 'slug');
+	assertSafePathSegment(sessionId, 'sessionId');
 	return path.join(resolveProjectsRoot(), slug, `${sessionId}.jsonl`);
 }
 
-/** Best-effort, reverse-engineered from observed directory names — not documented by Anthropic. */
+// Reverse-engineered from observed directory names — not documented by Anthropic.
 export function slugFromCwd(cwd: string): string {
 	return cwd.replace(/[:\\/]/g, '-');
 }
 
-// slugFromCwd is lossy — a literal hyphen inside a folder name (e.g. "second-flow") is
-// indistinguishable from a path-separator hyphen once encoded, so the slug alone can never be
-// decoded back into a real path. The transcript itself is the only place the real path survives.
-//
-// Bounded by LINE count, not byte count: a real transcript can open with a handful of tiny
-// metadata-only records (mode/permission-mode/etc.) followed by one huge system-init record —
-// observed in the wild at 16KB+ for a single line — which would blow past any fixed byte budget
-// before ever reaching the first line that actually carries `cwd`. Capping the number of lines
-// inspected instead means one oversized early line just costs one line's worth of JSON.parse, not
-// a truncated read that never gets far enough to find anything.
+// Lossy — a literal hyphen in a folder name is indistinguishable from an encoded separator, so the transcript's own cwd field is the only place the real path survives.
+// Line-bounded, not byte-bounded — a real transcript can front-load one 16KB+ metadata line before the first line carrying cwd, which would blow a byte budget before getting there.
 const CWD_PEEK_LINE_LIMIT = 50;
 
-/**
- * Best-effort read of a session's real `cwd`, for display purposes only — scans at most the first
- * `CWD_PEEK_LINE_LIMIT` lines (not the whole file, which may be many MB) and returns the first
- * `cwd` string found. Returns null on any read/parse failure or if none is found in that many
- * lines; callers must treat that as "unknown", not an error.
- */
+// Best-effort, display-only — returns null (never throws) on any read/parse failure or if no line within CWD_PEEK_LINE_LIMIT carries a cwd.
 export async function peekSessionCwd(filePath: string): Promise<string | null> {
 	const rl = readline.createInterface({
 		input: createReadStream(filePath, 'utf-8'),
