@@ -146,6 +146,54 @@ test('resolves an ordinary sync tool call via a matching tool_result', async () 
 	}
 });
 
+test("a tool_result's is_error flag is preserved — text alone cannot distinguish failure", async () => {
+	const lines = [
+		line({
+			type: 'assistant',
+			message: {
+				id: 'msg_err',
+				model: 'claude-sonnet-5',
+				role: 'assistant',
+				content: [
+					{
+						type: 'tool_use',
+						id: 'toolu_fail',
+						name: 'Bash',
+						input: { command: 'git commit -m "x"' },
+					},
+				],
+				usage: { input_tokens: 1, output_tokens: 1 },
+			},
+			uuid: 'u1',
+			timestamp: 't1',
+		}),
+		line({
+			type: 'user',
+			message: {
+				role: 'user',
+				content: [
+					{
+						type: 'tool_result',
+						tool_use_id: 'toolu_fail',
+						content: [{ type: 'text', text: 'Commit blocked: Prettier check failed' }],
+						is_error: true,
+					},
+				],
+			},
+			uuid: 'u2',
+			timestamp: 't2',
+		}),
+	];
+
+	const session = await parseRecords(lines, context);
+	const call = session.timeline.find((e): e is ToolCallEvent => e.kind === 'tool-call');
+
+	assert.equal(call?.result.kind, 'sync');
+	if (call?.result.kind === 'sync') {
+		assert.equal(call.result.isError, true);
+	}
+});
+
 test('resolves every tool_result block when a turn fires two tool calls and both results land in one record', async () => {
 	const lines = [
 		line({

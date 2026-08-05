@@ -91,7 +91,9 @@ function describeToolResult(result: ToolCallResult): string {
 		case 'pending':
 			return '(pending)';
 		case 'sync':
-			return truncate(result.text);
+			return result.isError === true
+				? `[FAILED] ${truncate(result.text)}`
+				: truncate(result.text);
 		case 'async-task-notification':
 			return truncate(
 				`${result.status ?? 'unknown'}${result.summary ? `: ${result.summary}` : ''}`,

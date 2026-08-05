@@ -17,6 +17,32 @@ function makeBashCall(command: string, toolUseId = 'toolu_bash'): ToolCallEvent 
 	};
 }
 
+test('a commit blocked by a pre-commit hook is not a boundary', () => {
+	const blocked: ToolCallEvent = {
+		...makeBashCall('git commit -m "x"', 'toolu_blocked'),
+		result: {
+			kind: 'sync',
+			text: 'PreToolUse:Bash hook error: Commit blocked: Prettier check failed',
+			isError: true,
+		},
+	};
+
+	assert.deepEqual(detectBoundaryCandidates([blocked]), []);
+});
+
+test('a retry after a blocked commit is the only boundary detected', () => {
+	const blocked: ToolCallEvent = {
+		...makeBashCall('git commit -m "x"', 'toolu_blocked'),
+		result: { kind: 'sync', text: 'Commit blocked', isError: true },
+	};
+	const retry = makeBashCall('git commit -m "x"', 'toolu_retry');
+
+	const candidates = detectBoundaryCandidates([blocked, retry]);
+
+	assert.equal(candidates.length, 1);
+	assert.equal(candidates[0].toolUseId, 'toolu_retry');
+});
+
 function makePowerShellCall(command: string, toolUseId = 'toolu_ps'): ToolCallEvent {
 	return {
 		kind: 'tool-call',
