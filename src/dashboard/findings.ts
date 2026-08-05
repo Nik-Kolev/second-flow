@@ -42,19 +42,21 @@ export async function getRankedProposalGroups(deps: FindingsDeps = {}): Promise<
 	const result: ProposalGroup[] = [];
 	for (const rows of groups.values()) {
 		// rows came from a createdAt-desc query, so rows[0] is the most recent in the group.
-		const representative = rows[0]!;
 		const status = rows.reduce(
 			(worst, row) =>
 				PROPOSAL_STATUS_RANK[row.status] < PROPOSAL_STATUS_RANK[worst] ? row.status : worst,
-			representative.status,
+			rows[0]!.status,
 		);
+		// Everything shown must come from rows of the status on the badge — otherwise a group holding one proposed and one resolved row renders the resolved proposal's wording under a "Proposed" badge, presenting an edit the user already applied as still outstanding.
+		const matching = rows.filter((row) => row.status === status);
+		const representative = matching[0]!;
 		result.push({
 			targetRuleRef: representative.targetRuleRef,
 			auditedSessionId: representative.auditedSessionId,
 			status,
-			occurrenceCount: rows.length,
+			occurrenceCount: matching.length,
 			representative,
-			allEvidence: rows.map((row) => row.evidence),
+			allEvidence: matching.map((row) => row.evidence),
 			latestCreatedAt: representative.createdAt,
 		});
 	}
