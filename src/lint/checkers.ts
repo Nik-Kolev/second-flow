@@ -31,9 +31,9 @@ export const CHECKERS: CheckerDefinition[] = [
 	{
 		id: 'shell-command-label',
 		ruleShapeDescription:
-			'A rule requiring every shell command (Bash/PowerShell) to be preceded by a short ' +
-			'labeled text block (e.g. a line starting with "RUNNING:") explaining what the ' +
-			'command does before it runs.',
+			'A rule requiring the agent to explain or narrate every shell command ' +
+			'(Bash/PowerShell) before running it, rather than running it silently. Any prose ' +
+			'explanation satisfies this — do not require a specific prefix, tag, or marker token.',
 		check: checkShellCommandLabel,
 	},
 	{

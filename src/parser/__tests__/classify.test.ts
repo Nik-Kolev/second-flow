@@ -54,6 +54,50 @@ test('groups a multi-line assistant turn into one event with usage counted once'
 	assert.equal(turns[0].usage.inputTokens, 10);
 });
 
+test('a tool call on a later line of a grouped turn still points at that turn, not its own record', async () => {
+	const usage = { input_tokens: 10, output_tokens: 20 };
+	const lines = [
+		line({
+			type: 'assistant',
+			message: {
+				id: 'msg_split',
+				model: 'claude-sonnet-5',
+				role: 'assistant',
+				content: [{ type: 'text', text: 'Checking the installed version.' }],
+				usage,
+			},
+			uuid: 'line-1',
+			timestamp: 't1',
+		}),
+		line({
+			type: 'assistant',
+			message: {
+				id: 'msg_split',
+				model: 'claude-sonnet-5',
+				role: 'assistant',
+				content: [
+					{ type: 'tool_use', id: 'toolu_x', name: 'Bash', input: { command: 'ls' } },
+				],
+				usage,
+			},
+			uuid: 'line-2',
+			timestamp: 't2',
+		}),
+	];
+
+	const session = await parseRecords(lines, context);
+	const turn = session.timeline.find((e): e is AssistantTurnEvent => e.kind === 'assistant-turn');
+	const call = session.timeline.find((e): e is ToolCallEvent => e.kind === 'tool-call');
+
+	assert.equal(turn?.uuid, 'line-1');
+	assert.equal(
+		call?.callerUuid,
+		'line-1',
+		'callerUuid must resolve to the grouped turn, or a uuid-keyed lookup finds nothing',
+	);
+	assert.equal(turn?.content.length, 2, 'narration and the tool call share one turn');
+});
+
 test('resolves an ordinary sync tool call via a matching tool_result', async () => {
 	const lines = [
 		line({

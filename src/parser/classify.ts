@@ -163,7 +163,8 @@ function handleAssistantRecord(
 				toolUseId: toolUseBlock.id,
 				toolName: toolUseBlock.name,
 				input: scrubbedInput,
-				callerUuid: uuid,
+				// turn.uuid, not this record's uuid — a turn spanning several JSONL lines is grouped under its first line, so this record's uuid would resolve to no turn at all.
+				callerUuid: turn.uuid,
 				callTimestamp: timestamp,
 				isSubagentSpawn: toolUseBlock.name === 'Agent' || toolUseBlock.name === 'Task',
 				isBackground: Boolean(

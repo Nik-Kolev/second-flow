@@ -38,10 +38,10 @@ function makeShellCall(
 	};
 }
 
-test('a shell call with an immediately preceding RUNNING: label produces no finding', () => {
+test('a shell call narrated by an immediately preceding text block produces no finding', () => {
 	const timeline = [
 		makeTurn('u1', [
-			{ type: 'text', text: 'RUNNING: run the test suite' },
+			{ type: 'text', text: 'Running the test suite to confirm nothing broke.' },
 			{ type: 'tool_use', id: 'a', name: 'Bash', input: { command: 'npm test' } },
 		]),
 		makeShellCall('a', 'u1'),
@@ -66,10 +66,48 @@ test('a shell call with no preceding text block produces a finding', () => {
 	assert.equal(findings[0].evidence, 'npm test');
 });
 
-test('a shell call preceded by unrelated text produces a finding', () => {
+// Regression: this asserted the opposite while the checker required a literal "RUNNING:" prefix, which no rulebook actually mandates.
+test('plain prose narration counts — no prefix or marker token is required', () => {
 	const timeline = [
 		makeTurn('u1', [
 			{ type: 'text', text: "I'll run the tests now." },
+			{ type: 'tool_use', id: 'a', name: 'Bash', input: { command: 'npm test' } },
+		]),
+		makeShellCall('a', 'u1'),
+	];
+
+	assert.deepEqual(checkShellCommandLabel(timeline), []);
+});
+
+test('an interleaved thinking block does not break narration adjacency', () => {
+	const timeline = [
+		makeTurn('u1', [
+			{ type: 'text', text: 'Checking the installed version.' },
+			{ type: 'thinking', thinking: 'which flag does this take again' },
+			{ type: 'tool_use', id: 'a', name: 'Bash', input: { command: 'npm test' } },
+		]),
+		makeShellCall('a', 'u1'),
+	];
+
+	assert.deepEqual(checkShellCommandLabel(timeline), []);
+});
+
+test('a thinking block with no narration text before it is still a finding', () => {
+	const timeline = [
+		makeTurn('u1', [
+			{ type: 'thinking', thinking: 'I should just run it' },
+			{ type: 'tool_use', id: 'a', name: 'Bash', input: { command: 'npm test' } },
+		]),
+		makeShellCall('a', 'u1'),
+	];
+
+	assert.equal(checkShellCommandLabel(timeline).length, 1);
+});
+
+test('a whitespace-only text block does not count as narration', () => {
+	const timeline = [
+		makeTurn('u1', [
+			{ type: 'text', text: '   \n  ' },
 			{ type: 'tool_use', id: 'a', name: 'Bash', input: { command: 'npm test' } },
 		]),
 		makeShellCall('a', 'u1'),
@@ -92,7 +130,7 @@ test('a PowerShell call is checked the same as a Bash call', () => {
 test('two shell calls in the same turn each need their own label', () => {
 	const timeline = [
 		makeTurn('u1', [
-			{ type: 'text', text: 'RUNNING: list files' },
+			{ type: 'text', text: 'Listing the files in this directory.' },
 			{ type: 'tool_use', id: 'a', name: 'Bash', input: { command: 'ls' } },
 			{ type: 'tool_use', id: 'b', name: 'Bash', input: { command: 'pwd' } },
 		]),
