@@ -23,6 +23,10 @@ function shellBoundaryCandidates(call: ToolCallEvent): BoundaryCandidate[] {
 	if (!SHELL_TOOL_NAMES.has(call.toolName)) {
 		return [];
 	}
+	// A blocked or failed command never crossed the boundary — a commit rejected by a pre-commit hook is not a commit, and counting it makes the retry look ungated.
+	if (call.result.kind === 'sync' && call.result.isError === true) {
+		return [];
+	}
 	const command = extractShellCommand(call.input);
 	if (!command) {
 		return [];

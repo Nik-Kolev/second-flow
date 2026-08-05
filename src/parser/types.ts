@@ -38,6 +38,7 @@ export type RawUserContentBlock =
 			type: 'tool_result';
 			tool_use_id: string;
 			content: string | Array<{ type: string; text?: string; [key: string]: unknown }>;
+			is_error?: boolean;
 	  }
 	| { type: string; [key: string]: unknown };
 
@@ -134,7 +135,8 @@ export interface SubagentUsage {
 
 export type ToolCallResult =
 	| { kind: 'pending' }
-	| { kind: 'sync'; timestamp?: string; text: string; raw?: unknown }
+	// isError mirrors the tool_result block's own is_error flag — the only structural signal that a command failed; its text alone is not reliably distinguishable from success.
+	| { kind: 'sync'; timestamp?: string; text: string; raw?: unknown; isError?: boolean }
 	| {
 			kind: 'async-task-notification';
 			timestamp?: string;

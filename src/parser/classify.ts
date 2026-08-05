@@ -287,7 +287,13 @@ function handleUserRecord(
 			const text = scrubText(extractText(block.content));
 			const rawResult =
 				isSingleBlock && toolUseResult !== undefined ? scrubDeep(toolUseResult) : undefined;
-			pending.result = { kind: 'sync', timestamp, text, raw: rawResult };
+			pending.result = {
+				kind: 'sync',
+				timestamp,
+				text,
+				raw: rawResult,
+				isError: block.is_error === true,
+			};
 			pendingToolCalls.delete(block.tool_use_id);
 		}
 		return;
