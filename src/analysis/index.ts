@@ -15,6 +15,8 @@ export {
 	extractEvidenceWindow,
 	EVIDENCE_WINDOW_MERGE_GAP,
 	EVIDENCE_WINDOW_RADIUS,
+	MAX_SPAN_TRIGGERS_PER_KIND,
+	selectSpanTriggers,
 	WHOLE_TIMELINE_FALLBACK_THRESHOLD,
 } from './evidence-window.js';
 export type { EvidenceSpan } from './evidence-window.js';
