@@ -2,19 +2,26 @@ import type { AssistantTurnEvent, TimelineEvent } from '../parser/index.js';
 import { extractShellCommand, SHELL_TOOL_NAMES } from '../stats/index.js';
 import type { LintFinding } from './types.js';
 
-const RUNNING_LABEL = /^RUNNING:/m;
-
+// Any non-empty prose counts. Whether that prose is actually outcome-focused rather than a restatement of the command is a judgment call, so it belongs to Layer 2, not here.
 function isLabeled(turn: AssistantTurnEvent | undefined, toolUseId: string): boolean {
 	const blocks = turn?.content ?? [];
 	const index = blocks.findIndex((block) => block.type === 'tool_use' && block.id === toolUseId);
-	const preceding = index > 0 ? blocks[index - 1] : undefined;
+	if (index < 1) {
+		return false;
+	}
+	// Thinking is collapsed and never shown, so it is not narration — but it must not break adjacency either, since the model interleaves it freely between the text and the call.
+	let cursor = index - 1;
+	while (cursor >= 0 && blocks[cursor].type === 'thinking') {
+		cursor -= 1;
+	}
+	const preceding = cursor >= 0 ? blocks[cursor] : undefined;
 	if (preceding?.type !== 'text') {
 		return false;
 	}
-	return RUNNING_LABEL.test((preceding as { type: 'text'; text: string }).text);
+	return (preceding as { type: 'text'; text: string }).text.trim().length > 0;
 }
 
-// Requires a RUNNING: label immediately before each shell call, per-call not per-turn.
+// Catches only the mechanically-provable case: a shell call run with no narration at all, per-call not per-turn.
 export function checkShellCommandLabel(timeline: TimelineEvent[]): LintFinding[] {
 	const turnByUuid = new Map<string, AssistantTurnEvent>();
 	for (const event of timeline) {
