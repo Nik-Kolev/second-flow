@@ -78,6 +78,49 @@ test('getRankedProposalGroups collapses same-session same-ref rows into one grou
 	assert.deepEqual(groups[0]!.allEvidence.sort(), ['evidence A', 'evidence B']);
 });
 
+test('a group shows only rows matching its own status — never a resolved proposal under an open badge', async () => {
+	const sessionId = await seedSession();
+	// Resolved row is created second, so it is the most recent — the pre-fix representative.
+	await testPrisma.ruleProposal.create({
+		data: {
+			auditedSessionId: sessionId,
+			targetRuleRef: 'CLAUDE.md',
+			targetTextSnapshot: 'old text',
+			proposedText: 'still outstanding',
+			evidence: 'evidence for the open proposal',
+			status: RuleProposalStatus.proposed,
+		},
+	});
+	await testPrisma.ruleProposal.create({
+		data: {
+			auditedSessionId: sessionId,
+			targetRuleRef: 'CLAUDE.md',
+			targetTextSnapshot: 'old text',
+			proposedText: 'already applied',
+			evidence: 'evidence for the resolved proposal',
+			status: RuleProposalStatus.resolved,
+		},
+	});
+
+	const groups = await getRankedProposalGroups({ prisma: testPrisma });
+
+	assert.equal(groups.length, 1);
+	const group = groups[0]!;
+	assert.equal(group.status, RuleProposalStatus.proposed);
+	assert.equal(
+		group.representative.status,
+		RuleProposalStatus.proposed,
+		'the rendered proposal must carry the status shown on the badge',
+	);
+	assert.equal(group.representative.proposedText, 'still outstanding');
+	assert.equal(
+		group.occurrenceCount,
+		1,
+		'a resolved row must not inflate an open occurrence count',
+	);
+	assert.deepEqual(group.allEvidence, ['evidence for the open proposal']);
+});
+
 test('getRankedProposalGroups does not collapse the same targetRuleRef across different sessions', async () => {
 	const sessionA = await seedSession();
 	const sessionB = await seedSession();
