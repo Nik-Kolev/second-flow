@@ -5,6 +5,8 @@ import {
 	buildEvidenceSpans,
 	extractEvidenceWindow,
 	EVIDENCE_WINDOW_RADIUS,
+	MAX_SPAN_TRIGGERS_PER_KIND,
+	selectSpanTriggers,
 	WHOLE_TIMELINE_FALLBACK_THRESHOLD,
 } from '../evidence-window.js';
 
@@ -13,6 +15,47 @@ function makeTimeline(length: number): UserMessageEvent[] {
 }
 
 const LONG_LENGTH = WHOLE_TIMELINE_FALLBACK_THRESHOLD + 40;
+
+test('selectSpanTriggers keeps every trigger when each kind is under the cap', () => {
+	const triggers = [
+		{ kind: 'lint-finding', timelineIndex: 1 },
+		{ kind: 'lint-finding', timelineIndex: 2 },
+		{ kind: 'user-pushback', timelineIndex: 3 },
+	];
+
+	assert.deepEqual(selectSpanTriggers(triggers), triggers);
+});
+
+test('selectSpanTriggers caps each kind independently', () => {
+	const triggers = [
+		...Array.from({ length: 40 }, (_, i) => ({ kind: 'lint-finding', timelineIndex: i })),
+		{ kind: 'rate-limit-hit', timelineIndex: 100 },
+		{ kind: 'rate-limit-hit', timelineIndex: 101 },
+	];
+
+	const selected = selectSpanTriggers(triggers);
+	const lint = selected.filter((t) => t.kind === 'lint-finding');
+	const rateLimit = selected.filter((t) => t.kind === 'rate-limit-hit');
+
+	assert.equal(lint.length, MAX_SPAN_TRIGGERS_PER_KIND);
+	assert.equal(rateLimit.length, 2, 'a kind under the cap is never trimmed');
+});
+
+test('selectSpanTriggers samples across the whole run, not just the start', () => {
+	const triggers = Array.from({ length: 100 }, (_, i) => ({
+		kind: 'lint-finding',
+		timelineIndex: i,
+	}));
+
+	const indices = selectSpanTriggers(triggers).map((t) => t.timelineIndex);
+
+	assert.equal(indices[0], 0, 'the first occurrence is always kept');
+	assert.equal(indices[indices.length - 1], 99, 'the last occurrence is always kept');
+	assert.ok(
+		indices.some((i) => i > 20 && i < 80),
+		'the middle of the session must be represented',
+	);
+});
 
 test('zero triggers produces zero spans', () => {
 	assert.deepEqual(buildEvidenceSpans(LONG_LENGTH, []), []);

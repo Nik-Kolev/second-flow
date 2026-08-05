@@ -6,7 +6,11 @@ import type { RulebookResolution } from '../rulebook/index.js';
 import type { SessionStats } from '../stats/index.js';
 import { checkCeiling, confirmJudgmentBatch } from './ceiling.js';
 import type { CeilingDeps } from './ceiling.js';
-import { buildEvidenceSpans, extractEvidenceWindow } from './evidence-window.js';
+import {
+	buildEvidenceSpans,
+	extractEvidenceWindow,
+	selectSpanTriggers,
+} from './evidence-window.js';
 import { collectGateTriggers } from './gate.js';
 import type { GateTrigger } from './gate.js';
 import { persistJudgmentFindings, runJudgmentCall } from './judgment.js';
@@ -61,9 +65,10 @@ export function checkGateAndBuildEvidence(
 	if (triggers.length === 0) {
 		return null;
 	}
+	// Capped for span-building only — `triggers` stays complete so the confirm dialog's breakdown and flaggedSignals still report every one.
 	const spans = buildEvidenceSpans(
 		input.session.timeline.length,
-		triggers.map((trigger) => trigger.timelineIndex),
+		selectSpanTriggers(triggers).map((trigger) => trigger.timelineIndex),
 	);
 	return { triggers, evidenceWindow: extractEvidenceWindow(input.session.timeline, spans) };
 }
