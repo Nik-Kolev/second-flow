@@ -373,7 +373,8 @@ export async function parseRecords(
 				timestamp: sys.timestamp,
 				durationMs: sys.durationMs,
 				messageCount: sys.messageCount,
-				raw: sys,
+				// A local_command record carries the command's raw stdout, so this is the one timeline path that can hold a pasted secret.
+				raw: scrubDeep(sys),
 			});
 			continue;
 		}

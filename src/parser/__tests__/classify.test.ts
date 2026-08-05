@@ -400,6 +400,26 @@ test('a system turn_duration record keeps its duration fields', async () => {
 	assert.equal(sys?.messageCount, 3);
 });
 
+test('a secret in a system record stdout is scrubbed, like every other timeline path', async () => {
+	const lines = [
+		line({
+			type: 'system',
+			subtype: 'local_command',
+			content:
+				'<local-command-stdout>ANTHROPIC_API_KEY=sk-ant-abcdef1234567890</local-command-stdout>',
+			uuid: 's1',
+			timestamp: 't1',
+		}),
+	];
+
+	const session = await parseRecords(lines, context);
+	const sys = session.timeline.find((e): e is SystemEvent => e.kind === 'system');
+	const rawContent = (sys?.raw as { content?: string } | undefined)?.content ?? '';
+
+	assert.equal(rawContent.includes('sk-ant-abcdef1234567890'), false);
+	assert.equal(rawContent.includes('[REDACTED'), true);
+});
+
 test('a rate-limit-shaped assistant record is flagged structurally', async () => {
 	const lines = [
 		line({
