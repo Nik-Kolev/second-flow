@@ -33,10 +33,16 @@ function activationScopedBlocks(rulebook: RulebookResolution): RulebookResolutio
 	return rulebook.blocks.filter((block) => block.origin !== 'memory');
 }
 
+// A cached row is only valid for the checker wording it was classified against — without this, editing a ruleShapeDescription silently reuses the old classification forever.
+function checkerFingerprint(): string {
+	const definitions = CHECKERS.map((checker) => [checker.id, checker.ruleShapeDescription]);
+	return createHash('sha256').update(JSON.stringify(definitions)).digest('hex');
+}
+
 // JSON-encoding (not a joined string) means two different block sets can't hash identically just because a block's text contains the separator.
 function hashRulebook(rulebook: RulebookResolution): string {
 	const blockTexts = activationScopedBlocks(rulebook).map((block) => block.text);
-	const encoded = JSON.stringify(blockTexts);
+	const encoded = JSON.stringify([checkerFingerprint(), blockTexts]);
 	return createHash('sha256').update(encoded).digest('hex');
 }
 

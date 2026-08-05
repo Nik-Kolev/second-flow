@@ -380,3 +380,34 @@ test('CLAUDE.md content still drives the cache hash even with identical memory b
 		'a genuine CLAUDE.md change must still be a cache miss regardless of memory content',
 	);
 });
+
+test("rewording a checker's ruleShapeDescription invalidates its cached classification", async () => {
+	const fake = makeFakeAnthropic({
+		'commit-gating': true,
+		'format-before-commit': false,
+		'shell-command-label': true,
+		'boundary-compact': false,
+	});
+	const rulebook = makeRulebook('Rulebook I: checker fingerprint test.');
+
+	await getActivationMap(rulebook, { prisma: testPrisma, anthropic: fake.client });
+	await getActivationMap(rulebook, { prisma: testPrisma, anthropic: fake.client });
+	assert.equal(
+		fake.calls(),
+		1,
+		'unchanged checkers against the same rulebook must hit the cache',
+	);
+
+	const original = CHECKERS[0].ruleShapeDescription;
+	CHECKERS[0].ruleShapeDescription = `${original} (reworded)`;
+	try {
+		await getActivationMap(rulebook, { prisma: testPrisma, anthropic: fake.client });
+		assert.equal(
+			fake.calls(),
+			2,
+			'a reworded rule-shape must re-classify — the old row was classified against different wording',
+		);
+	} finally {
+		CHECKERS[0].ruleShapeDescription = original;
+	}
+});
