@@ -755,7 +755,7 @@ async function startAuditFlow(sessionId, force) {
 			dialogRowHtml(
 				'Max total (full output)',
 				formatUsd(preview.estimate.maxTotalCostUsd),
-				'Assumes the model uses its entire 4,096-token output budget. Real calls usually finish well short of that, so actual spend is typically lower than this ceiling.',
+				`Assumes the model uses its entire ${formatCount(preview.estimate.maxOutputTokens)}-token output budget. Real calls usually finish well short of that, so actual spend is typically lower than this ceiling.`,
 			),
 		);
 	}
