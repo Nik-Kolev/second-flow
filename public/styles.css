@@ -417,6 +417,8 @@ code,
 .session-summary .summary-actions {
 	display: flex;
 	justify-content: flex-end;
+	flex-wrap: wrap;
+	gap: 8px;
 	margin-top: 10px;
 }
 
