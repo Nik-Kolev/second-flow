@@ -33,7 +33,7 @@ A local tool that reads Claude Code session transcripts and audits them, as an i
 - `npm run build` — compile to `dist/`
 - `npm start` — run the compiled build
 - `npm run lint` / `npm run format`
-- `npm test` — run the parser, rulebook, stats, lint, and analysis test suites
+- `npm test` — run the parser, rulebook, stats, lint, and analysis test suites. Concurrency is capped at 4 on purpose: ten-odd suites each spawn `npx prisma db push` against their own temp SQLite DB, and at Node's default (one worker per core) the machine saturates hard enough that Windows still holds the DB file lock when the teardown's `rm` retry budget runs out — failing the run on an `EBUSY` unlink rather than on any assertion. Symptom is a suite that passes when run alone and fails only in the full run.
 - `npx prisma migrate dev --name <name>` — apply a schema change
 - `npx prisma studio` — browse the SQLite DB
 
