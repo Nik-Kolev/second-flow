@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Second Flow — Session Audits</title>
+		<link rel="icon" href="data:," />
+		<link rel="stylesheet" href="/styles.css" />
+	</head>
+	<body>
+		<header class="page-header">
+			<div class="page-header-row">
+				<div>
+					<h1>Second Flow</h1>
+					<p class="page-subtitle">Session audits — read-only over your config</p>
+				</div>
+				<div class="settings-wrap">
+					<button
+						id="settings-button"
+						type="button"
+						aria-haspopup="true"
+						aria-expanded="false"
+						aria-label="Judgment model settings"
+					></button>
+					<div class="popover" id="settings-popover" hidden>
+						<p class="popover-title">Judgment model</p>
+						<div id="model-options"></div>
+						<p class="popover-note">
+							Haiku stays fixed for activation and reconciliation — this only changes
+							the judgment pass.
+						</p>
+						<p class="popover-status" id="settings-status"></p>
+					</div>
+				</div>
+			</div>
+		</header>
+
+		<section class="stat-strip" id="stat-strip" aria-label="Overview">
+			<p class="loading" id="loading-message">Loading…</p>
+		</section>
+
+		<div class="tabs-container" id="tabs-container" hidden>
+			<nav class="tabs" role="tablist" aria-label="Dashboard sections">
+				<button
+					role="tab"
+					id="tab-sessions"
+					aria-controls="panel-sessions"
+					aria-selected="true"
+				>
+					Sessions
+				</button>
+				<button
+					role="tab"
+					id="tab-findings"
+					aria-controls="panel-findings"
+					aria-selected="false"
+				>
+					Findings
+				</button>
+				<button
+					role="tab"
+					id="tab-proposals"
+					aria-controls="panel-proposals"
+					aria-selected="false"
+				>
+					Rule proposals
+				</button>
+			</nav>
+
+			<section
+				class="panel"
+				id="panel-sessions"
+				role="tabpanel"
+				aria-labelledby="tab-sessions"
+			>
+				<div id="projects-view"></div>
+				<div id="sessions-view" hidden></div>
+			</section>
+			<section
+				class="panel"
+				id="panel-findings"
+				role="tabpanel"
+				aria-labelledby="tab-findings"
+				hidden
+			></section>
+			<section
+				class="panel"
+				id="panel-proposals"
+				role="tabpanel"
+				aria-labelledby="tab-proposals"
+				hidden
+			></section>
+		</div>
+
+		<dialog id="audit-dialog">
+			<div id="audit-dialog-body"></div>
+		</dialog>
+
+		<button id="back-to-top" type="button" aria-label="Back to top"></button>
+
+		<div id="toast-container" aria-live="polite" aria-atomic="false"></div>
+
+		<script src="/app.js" defer></script>
+	</body>
+</html>

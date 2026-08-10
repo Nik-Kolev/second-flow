@@ -1,0 +1,124 @@
+enum RuleProposalStatus {
+  proposed
+  resolved
+  dismissed
+  recurring
+  needsConfirm
+}
+
+model RuleProposal {
+  id                 String             @id @default(cuid())
+  auditedSessionId   String
+  auditedSession     AuditedSession     @relation(fields: [auditedSessionId], references: [id], onDelete: Cascade)
+  targetRuleRef      String
+  targetTextSnapshot String
+  proposedText       String
+  evidence           String
+  status             RuleProposalStatus @default(proposed)
+  createdAt          DateTime           @default(now())
+
+  @@index([status])
+  @@index([auditedSessionId])
+}
+
+enum AnalysisNoteKind {
+  promptCoaching
+  environmentalInstruction
+  compliance
+}
+
+// Only meaningful for compliance/environmentalInstruction notes — the judgment model classifies
+// these itself at generation time (judgment.ts), rather than the app inferring it from evidence
+// text after the fact.
+enum NoteOutcome {
+  violation
+  positive
+}
+
+model AnalysisNote {
+  id               String           @id @default(cuid())
+  auditedSessionId String
+  auditedSession   AuditedSession   @relation(fields: [auditedSessionId], references: [id], onDelete: Cascade)
+  kind             AnalysisNoteKind
+  // The rulebook file source this note is about, or "general" when it ties to no single file.
+  // Recurrence detection is a string match on this field. Null only on rows created before the
+  // field existed — displayed as "legacy, no rule link", never matched for recurrence.
+  ruleRef          String?
+  evidence         String
+  // Null only on rows created before this field existed — displayed as "not classified", never
+  // guessed at from evidence text.
+  outcome          NoteOutcome?
+  // Only populated for promptCoaching notes — the model's suggested rephrasing, when it gives one.
+  suggestion       String?
+  createdAt        DateTime         @default(now())
+
+  @@index([auditedSessionId])
+}
+
+model AuditRun {
+  id              String           @id @default(cuid())
+  startedAt       DateTime         @default(now())
+  completedAt     DateTime?
+  createdAt       DateTime         @default(now())
+  calls           AuditRunCall[]
+  auditedSessions AuditedSession[]
+}
+
+model AuditRunCall {
+  id                  String    @id @default(cuid())
+  // Null for calls made outside any run — activation classification happens on first sight of a
+  // rulebook, not inside an audit, but its spend still belongs on the meter.
+  auditRunId          String?
+  auditRun            AuditRun? @relation(fields: [auditRunId], references: [id], onDelete: Cascade)
+  model               String
+  purpose             String
+  inputTokens         Int
+  outputTokens        Int
+  cacheReadTokens     Int
+  cacheCreationTokens Int
+  // Set only when a response came back but its content failed to parse — the raw material to
+  // reconstruct what a discarded call actually said, instead of losing it forever.
+  rawResponse         String?
+  errorText           String?
+  createdAt           DateTime  @default(now())
+
+  @@index([auditRunId])
+}
+
+enum AuditedSessionStatus {
+  completed
+  skippedCeiling
+  errored
+  wavedThrough
+}
+
+// One row per audit of a session — including sessions Pass 1's gate waves through cleanly
+// (status wavedThrough, written by the audit route): the free check is itself a result worth
+// remembering, so history can say "audited, nothing found" instead of re-reading the transcript.
+model AuditedSession {
+  id                    String               @id @default(cuid())
+  transcriptSessionId   String
+  projectSlug           String
+  auditRunId            String
+  auditRun              AuditRun             @relation(fields: [auditRunId], references: [id], onDelete: Cascade)
+  status                AuditedSessionStatus
+  // Sum of input+output+cacheRead+cacheCreation tokens across every assistant turn in the audited
+  // transcript, set at creation time (pipeline.ts). Null on rows created before step 8 shipped.
+  transcriptTokenTotal  Int?
+  // Transcript file stat at audit time — a later size/mtime mismatch means the session continued
+  // after this audit ("changed since audit"), without re-reading the file's content.
+  transcriptFileSize    Int?
+  transcriptFileMtime   DateTime?
+  // What the judgment call actually produced: rows persisted, plus proposals Sonnet returned that
+  // the valid-source filter dropped (judgment.ts) — the difference between "Sonnet found nothing"
+  // and "Sonnet found things we threw away." Null on rows from before the observability pass.
+  proposalsCreated      Int?
+  notesCreated          Int?
+  droppedProposalCount  Int?
+  createdAt             DateTime             @default(now())
+  ruleProposals         RuleProposal[]
+  analysisNotes         AnalysisNote[]
+
+  @@index([auditRunId])
+  @@index([transcriptSessionId])
+}

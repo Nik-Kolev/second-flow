@@ -1,0 +1,10 @@
+// Lazily created singleton — no hardcoded id. First read via getAuditSettings() (src/analysis/settings.ts)
+// creates the row seeded from the defaults there.
+model AuditSettings {
+  id                   String   @id @default(cuid())
+  maxSonnetCallsPerRun Int      @default(10)
+  // Which model runs the judgment pass (Layer 2). Must be one of the JUDGMENT_MODELS allowlist in
+  // src/analysis/settings.ts — Haiku stays fixed for activation/reconciliation classification.
+  judgmentModel        String   @default("claude-sonnet-5")
+  updatedAt            DateTime @updatedAt
+}
